@@ -1,10 +1,21 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { type NodeProps, NodeResizer } from '@xyflow/react';
 import { useBoardStore } from '../store/boardStore';
 import { ImageCard } from './cards/ImageCard';
 import { GifCard } from './cards/GifCard';
 import { VideoEmbedCard } from './cards/VideoEmbedCard';
-import type { BoardItem, ImageItemData, VideoEmbedData } from '../types';
+import { VideoUploadCard } from './cards/VideoUploadCard';
+import { LottieCard } from './cards/LottieCard';
+import { RiveCard } from './cards/RiveCard';
+import { getMedia } from '../db/boardRepository';
+import type {
+  BoardItem,
+  ImageItemData,
+  VideoEmbedData,
+  VideoUploadData,
+  LottieData,
+  RiveData,
+} from '../types';
 
 type BoardNodeData = {
   boardItem: BoardItem;
@@ -15,6 +26,32 @@ function BoardNodeInner({ data, selected }: NodeProps) {
   const nodeData = data as unknown as BoardNodeData;
   const item = nodeData.boardItem;
   const updateItemSize = useBoardStore((s) => s.updateItemSize);
+  const [blobUrl, setBlobUrl] = useState<string | undefined>();
+
+  // Load blob from IndexedDB for types that need it
+  useEffect(() => {
+    let revoke: string | undefined;
+    const loadBlob = async () => {
+      let blobId: string | undefined;
+      if (item.type === 'video-upload') {
+        blobId = (item.data as VideoUploadData).blobId;
+      } else if (item.type === 'rive') {
+        blobId = (item.data as RiveData).blobId;
+      }
+      if (blobId) {
+        const media = await getMedia(blobId);
+        if (media) {
+          const url = URL.createObjectURL(media.blob);
+          revoke = url;
+          setBlobUrl(url);
+        }
+      }
+    };
+    loadBlob();
+    return () => {
+      if (revoke) URL.revokeObjectURL(revoke);
+    };
+  }, [item.type, item.data]);
 
   const renderCard = () => {
     switch (item.type) {
@@ -47,6 +84,35 @@ function BoardNodeInner({ data, selected }: NodeProps) {
             data={item.data as VideoEmbedData}
             width={item.size.width}
             height={item.size.height}
+          />
+        );
+      case 'video-upload':
+        return (
+          <VideoUploadCard
+            id={item.id}
+            data={item.data as VideoUploadData}
+            width={item.size.width}
+            height={item.size.height}
+            blobUrl={blobUrl}
+          />
+        );
+      case 'lottie':
+        return (
+          <LottieCard
+            id={item.id}
+            data={item.data as LottieData}
+            width={item.size.width}
+            height={item.size.height}
+          />
+        );
+      case 'rive':
+        return (
+          <RiveCard
+            id={item.id}
+            data={item.data as RiveData}
+            width={item.size.width}
+            height={item.size.height}
+            blobUrl={blobUrl}
           />
         );
       default:

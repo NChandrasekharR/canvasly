@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
 import { parseVideoUrl } from '../utils/video';
-import { fileToDataUrl, isImageFile, isGifFile } from '../utils/files';
-import type { ImageItemData, VideoEmbedData } from '../types';
+import { fileToDataUrl, isImageFile, isGifFile, isVideoFile, getFileExtension } from '../utils/files';
+import { saveMedia } from '../db/boardRepository';
+import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData } from '../types';
 
 interface AddItemMenuProps {
   position: { x: number; y: number };
@@ -12,6 +13,7 @@ interface AddItemMenuProps {
 
 export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuProps) {
   const addItem = useBoardStore((s) => s.addItem);
+  const activeBoardId = useBoardStore((s) => s.activeBoardId);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlValue, setUrlValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -30,18 +32,30 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
   const handleFileUpload = async (files: FileList | null) => {
     if (!files) return;
     for (const file of Array.from(files)) {
-      const dataUrl = await fileToDataUrl(file);
-      if (isGifFile(file)) {
-        const data: ImageItemData = {
-          url: dataUrl,
-          fileName: file.name,
+      const ext = getFileExtension(file.name);
+
+      if (ext === 'json') {
+        const text = await file.text();
+        try {
+          const animationData = JSON.parse(text);
+          const data: LottieData = { animationData, speed: 1, fileName: file.name };
+          addItem('lottie', data, canvasPosition);
+        } catch { /* not valid JSON */ }
+      } else if (ext === 'riv') {
+        if (!activeBoardId) continue;
+        const blobId = await saveMedia(activeBoardId, file, file.name, 'application/octet-stream');
+        const data: RiveData = { blobId, fileName: file.name, fileSize: file.size, speed: 1 };
+        addItem('rive', data, canvasPosition);
+      } else if (isVideoFile(file)) {
+        if (!activeBoardId) continue;
+        const blobId = await saveMedia(activeBoardId, file, file.name, file.type);
+        const data: VideoUploadData = {
+          blobId, fileName: file.name, mimeType: file.type, fileSize: file.size,
         };
-        addItem('image', data, canvasPosition, { width: 300, height: 250 });
-      } else if (isImageFile(file)) {
-        const data: ImageItemData = {
-          url: dataUrl,
-          fileName: file.name,
-        };
+        addItem('video-upload', data, canvasPosition);
+      } else if (isGifFile(file) || isImageFile(file)) {
+        const dataUrl = await fileToDataUrl(file);
+        const data: ImageItemData = { url: dataUrl, fileName: file.name };
         addItem('image', data, canvasPosition);
       }
     }
@@ -98,30 +112,19 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
           <button
             onClick={handleUrlSubmit}
             className="mt-1.5 w-full px-2 py-1 rounded text-sm cursor-pointer"
-            style={{
-              backgroundColor: 'var(--accent)',
-              color: 'white',
-            }}
+            style={{ backgroundColor: 'var(--accent)', color: 'white' }}
           >
             Add
           </button>
         </div>
       ) : (
         <>
-          <MenuItem
-            icon="📁"
-            label="Upload File"
-            onClick={() => fileInputRef.current?.click()}
-          />
-          <MenuItem
-            icon="🔗"
-            label="Paste URL"
-            onClick={() => setShowUrlInput(true)}
-          />
+          <MenuItem icon="📁" label="Upload File" onClick={() => fileInputRef.current?.click()} />
+          <MenuItem icon="🔗" label="Paste URL" onClick={() => setShowUrlInput(true)} />
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*,.gif"
+            accept="image/*,video/*,.gif,.json,.riv"
             multiple
             className="hidden"
             onChange={(e) => handleFileUpload(e.target.files)}
@@ -145,12 +148,8 @@ function MenuItem({
     <button
       className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 cursor-pointer transition-colors"
       style={{ color: 'var(--text-primary)' }}
-      onMouseEnter={(e) =>
-        (e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)')
-      }
-      onMouseLeave={(e) =>
-        (e.currentTarget.style.backgroundColor = 'transparent')
-      }
+      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)')}
+      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
       onClick={onClick}
     >
       <span>{icon}</span>

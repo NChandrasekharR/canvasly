@@ -16,22 +16,26 @@ import { BoardNode } from './BoardNode';
 import { AddItemMenu } from './AddItemMenu';
 import { TopBar } from './TopBar';
 import { BottomBar } from './BottomBar';
-import { fileToDataUrl, isImageFile, isGifFile } from '../utils/files';
+import { Sidebar } from './Sidebar';
+import { fileToDataUrl, isImageFile, isGifFile, isVideoFile, getFileExtension } from '../utils/files';
 import { parseVideoUrl } from '../utils/video';
-import type { ImageItemData, VideoEmbedData } from '../types';
+import { saveMedia } from '../db/boardRepository';
+import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData } from '../types';
 
 const nodeTypes = {
   boardItem: BoardNode,
 };
 
 function CanvasInner() {
-  const { items, addItem, updateItemPosition, updateItemSize, removeItem } = useBoardStore();
+  const { items, addItem, updateItemPosition, updateItemSize, removeItem, activeBoardId } =
+    useBoardStore();
   const viewport = useViewport();
   const { screenToFlowPosition } = useReactFlow();
   const [menuState, setMenuState] = useState<{
     screen: { x: number; y: number };
     canvas: { x: number; y: number };
   } | null>(null);
+
   const nodes: Node[] = useMemo(
     () =>
       items.map((item) => ({
@@ -90,24 +94,67 @@ function CanvasInner() {
     [screenToFlowPosition]
   );
 
+  const handleFileDrop = useCallback(
+    async (file: File, flowPos: { x: number; y: number }) => {
+      const ext = getFileExtension(file.name);
+
+      if (ext === 'json') {
+        // Lottie JSON
+        const text = await file.text();
+        try {
+          const animationData = JSON.parse(text);
+          const data: LottieData = {
+            animationData,
+            speed: 1,
+            fileName: file.name,
+          };
+          addItem('lottie', data, flowPos);
+        } catch {
+          // Not valid JSON, ignore
+        }
+      } else if (ext === 'riv') {
+        // Rive file
+        if (!activeBoardId) return;
+        const blobId = await saveMedia(activeBoardId, file, file.name, 'application/octet-stream');
+        const data: RiveData = {
+          blobId,
+          fileName: file.name,
+          fileSize: file.size,
+          speed: 1,
+        };
+        addItem('rive', data, flowPos);
+      } else if (isVideoFile(file)) {
+        if (!activeBoardId) return;
+        const blobId = await saveMedia(activeBoardId, file, file.name, file.type);
+        const data: VideoUploadData = {
+          blobId,
+          fileName: file.name,
+          mimeType: file.type,
+          fileSize: file.size,
+        };
+        addItem('video-upload', data, flowPos);
+      } else if (isGifFile(file) || isImageFile(file)) {
+        const dataUrl = await fileToDataUrl(file);
+        const data: ImageItemData = {
+          url: dataUrl,
+          fileName: file.name,
+        };
+        addItem('image', data, flowPos);
+      }
+    },
+    [addItem, activeBoardId]
+  );
+
   const handleDrop = useCallback(
     async (event: React.DragEvent) => {
       event.preventDefault();
       const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-
       const files = event.dataTransfer.files;
       for (const file of Array.from(files)) {
-        if (isGifFile(file) || isImageFile(file)) {
-          const dataUrl = await fileToDataUrl(file);
-          const data: ImageItemData = {
-            url: dataUrl,
-            fileName: file.name,
-          };
-          addItem('image', data, flowPos);
-        }
+        await handleFileDrop(file, flowPos);
       }
     },
-    [screenToFlowPosition, addItem]
+    [screenToFlowPosition, handleFileDrop]
   );
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
@@ -115,7 +162,6 @@ function CanvasInner() {
     event.dataTransfer.dropEffect = 'copy';
   }, []);
 
-  // Clipboard paste support
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
       const flowPos = screenToFlowPosition({
@@ -123,7 +169,6 @@ function CanvasInner() {
         y: window.innerHeight / 2,
       });
 
-      // Check for pasted images
       const clipboardItems = event.clipboardData?.items;
       if (clipboardItems) {
         for (const item of Array.from(clipboardItems)) {
@@ -142,7 +187,6 @@ function CanvasInner() {
         }
       }
 
-      // Check for pasted URLs
       const text = event.clipboardData?.getData('text/plain')?.trim();
       if (text) {
         const parsed = parseVideoUrl(text);
@@ -160,7 +204,6 @@ function CanvasInner() {
     [screenToFlowPosition, addItem]
   );
 
-  // Register paste handler
   useEffect(() => {
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
@@ -168,11 +211,9 @@ function CanvasInner() {
 
   return (
     <div className="w-full h-full relative">
-      <TopBar boardName="Untitled Board" />
-      <div
-        className="absolute inset-0"
-        style={{ top: 40, bottom: 32 }}
-      >
+      <TopBar />
+      <Sidebar />
+      <div className="absolute inset-0" style={{ top: 40, bottom: 32 }}>
         <ReactFlow
           nodes={nodes}
           edges={[]}
@@ -192,12 +233,7 @@ function CanvasInner() {
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
         >
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={24}
-            size={1}
-            color="#333333"
-          />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#333333" />
           <MiniMap
             nodeColor="var(--bg-tertiary)"
             maskColor="rgba(0,0,0,0.5)"

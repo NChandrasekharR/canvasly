@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
 
 interface BottomBarProps {
@@ -5,8 +6,20 @@ interface BottomBarProps {
   onAddClick: (e: React.MouseEvent) => void;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function BottomBar({ zoom, onAddClick }: BottomBarProps) {
   const itemCount = useBoardStore((s) => s.items.length);
+  const storageUsage = useBoardStore((s) => s.storageUsage);
+  const refreshStorageUsage = useBoardStore((s) => s.refreshStorageUsage);
+
+  useEffect(() => {
+    refreshStorageUsage();
+  }, [refreshStorageUsage]);
 
   return (
     <div
@@ -20,6 +33,7 @@ export function BottomBar({ zoom, onAddClick }: BottomBarProps) {
       <div className="flex items-center gap-4">
         <span>Zoom: {Math.round(zoom * 100)}%</span>
         <span>Items: {itemCount}</span>
+        <span>{formatBytes(storageUsage)} / ~500 MB</span>
       </div>
       <button
         onClick={onAddClick}
