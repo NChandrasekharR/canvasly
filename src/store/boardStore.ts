@@ -78,6 +78,10 @@ interface BoardState {
   storageUsage: number;
   refreshStorageUsage: () => Promise<void>;
 
+  // Theme
+  theme: 'dark' | 'light';
+  toggleTheme: () => void;
+
   // Auto-save
   _saveTimeout: ReturnType<typeof setTimeout> | null;
   _scheduleSave: () => void;
@@ -351,6 +355,15 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   refreshStorageUsage: async () => {
     const usage = await getStorageUsage();
     set({ storageUsage: usage });
+  },
+
+  // Theme
+  theme: 'dark' as 'dark' | 'light',
+  toggleTheme: () => {
+    const newTheme = get().theme === 'dark' ? 'light' : 'dark';
+    set({ theme: newTheme });
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('motionboard-theme', newTheme);
   },
 
   // Auto-save (debounced 500ms)

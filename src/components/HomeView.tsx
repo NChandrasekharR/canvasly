@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBoardStore } from '../store/boardStore';
+import { exportBoard, importBoard, downloadBlob } from '../utils/exportImport';
 
 export function HomeView() {
-  const { boards, loadBoards, createNewBoard, openBoard, renameBoard, deleteBoard, duplicateBoard } =
+  const { boards, loadBoards, createNewBoard, openBoard, renameBoard, deleteBoard, duplicateBoard, theme, toggleTheme } =
     useBoardStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadBoards();
@@ -52,15 +54,53 @@ export function HomeView() {
         <h1 className="text-2xl font-bold" style={{ color: 'var(--accent)' }}>
           MotionBoard
         </h1>
-        <button
-          onClick={handleCreate}
-          className="px-4 py-2 rounded-lg text-sm font-medium text-white cursor-pointer transition-colors"
-          style={{ backgroundColor: 'var(--accent)' }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent-hover)')}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent)')}
-        >
-          + New Board
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleTheme}
+            className="px-3 py-2 rounded-lg text-sm cursor-pointer"
+            style={{
+              backgroundColor: 'var(--bg-tertiary)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="px-3 py-2 rounded-lg text-sm cursor-pointer"
+            style={{
+              backgroundColor: 'var(--bg-tertiary)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            Import
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".motionboard"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                await importBoard(file);
+                await loadBoards();
+              }
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={handleCreate}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-white cursor-pointer transition-colors"
+            style={{ backgroundColor: 'var(--accent)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent-hover)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent)')}
+          >
+            + New Board
+          </button>
+        </div>
       </div>
 
       {/* Board Grid */}
@@ -159,6 +199,16 @@ export function HomeView() {
                       className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <button
+                        onClick={async () => {
+                          const blob = await exportBoard(board.id);
+                          downloadBlob(blob, `${board.name}.motionboard`);
+                        }}
+                        className="text-xs cursor-pointer hover:underline"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        Export
+                      </button>
                       <button
                         onClick={() => startRename(board.id, board.name)}
                         className="text-xs cursor-pointer hover:underline"

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useBoardStore } from '../store/boardStore';
+import { exportBoard, downloadBlob } from '../utils/exportImport';
 
 export function TopBar() {
   const { activeBoardId, activeBoardName, renameBoard, setView } = useBoardStore();
@@ -143,6 +144,23 @@ export function TopBar() {
             border: '1px solid var(--border)',
           }}
         />
+
+        {/* Export */}
+        <button
+          className="text-xs px-2 py-1 rounded cursor-pointer"
+          style={{
+            backgroundColor: 'var(--bg-tertiary)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border)',
+          }}
+          onClick={async () => {
+            if (!activeBoardId) return;
+            const blob = await exportBoard(activeBoardId);
+            downloadBlob(blob, `${activeBoardName}.motionboard`);
+          }}
+        >
+          Export
+        </button>
       </div>
     </div>
   );
