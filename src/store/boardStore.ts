@@ -43,9 +43,36 @@ interface BoardState {
     size?: { width: number; height: number }
   ) => void;
   removeItem: (id: string) => void;
+  removeItems: (ids: string[]) => void;
   updateItemPosition: (id: string, position: { x: number; y: number }) => void;
   updateItemSize: (id: string, size: { width: number; height: number }) => void;
   updateItemData: (id: string, data: Partial<BoardItemData>) => void;
+
+  // Tags
+  updateItemTags: (id: string, tags: string[]) => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  tagFilter: string | null;
+  setTagFilter: (tag: string | null) => void;
+  getAllTags: () => string[];
+
+  // Z-index
+  bringToFront: (id: string) => void;
+  sendToBack: (id: string) => void;
+
+  // Grouping
+  groupItems: (itemIds: string[], label?: string) => void;
+  ungroupItems: (groupId: string) => void;
+
+  // Undo/Redo
+  _undoStack: BoardItem[][];
+  _redoStack: BoardItem[][];
+  _pushUndoState: () => void;
+  undo: () => void;
+  redo: () => void;
+
+  // Duplicate
+  duplicateItems: (ids: string[]) => void;
 
   // Storage
   storageUsage: number;
@@ -119,6 +146,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       items: board.items,
       groups: board.groups,
       view: 'canvas',
+      _undoStack: [],
+      _redoStack: [],
     });
   },
 
@@ -127,6 +156,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   groups: [],
 
   addItem: (type, data, position, size) => {
+    get()._pushUndoState();
     set((state) => ({
       items: [
         ...state.items,
@@ -146,8 +176,18 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   removeItem: (id) => {
+    get()._pushUndoState();
     set((state) => ({
       items: state.items.filter((item) => item.id !== id),
+    }));
+    get()._scheduleSave();
+  },
+
+  removeItems: (ids) => {
+    get()._pushUndoState();
+    const idSet = new Set(ids);
+    set((state) => ({
+      items: state.items.filter((item) => !idSet.has(item.id)),
     }));
     get()._scheduleSave();
   },
@@ -176,6 +216,133 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         item.id === id ? { ...item, data: { ...item.data, ...data } } : item
       ),
     }));
+    get()._scheduleSave();
+  },
+
+  // Tags
+  updateItemTags: (id, tags) => {
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.id === id ? { ...item, tags } : item
+      ),
+    }));
+    get()._scheduleSave();
+  },
+
+  searchQuery: '',
+  setSearchQuery: (query) => set({ searchQuery: query }),
+
+  tagFilter: null,
+  setTagFilter: (tag) => set({ tagFilter: tag }),
+
+  getAllTags: () => {
+    const tags = new Set<string>();
+    for (const item of get().items) {
+      for (const tag of item.tags) {
+        tags.add(tag);
+      }
+    }
+    return Array.from(tags).sort();
+  },
+
+  // Z-index
+  bringToFront: (id) => {
+    set((state) => {
+      const maxZ = Math.max(...state.items.map((i) => i.zIndex), 0);
+      return {
+        items: state.items.map((item) =>
+          item.id === id ? { ...item, zIndex: maxZ + 1 } : item
+        ),
+      };
+    });
+    get()._scheduleSave();
+  },
+
+  sendToBack: (id) => {
+    set((state) => {
+      const minZ = Math.min(...state.items.map((i) => i.zIndex), 0);
+      return {
+        items: state.items.map((item) =>
+          item.id === id ? { ...item, zIndex: minZ - 1 } : item
+        ),
+      };
+    });
+    get()._scheduleSave();
+  },
+
+  // Grouping
+  groupItems: (itemIds, label) => {
+    const groupId = uuidv4();
+    set((state) => ({
+      groups: [
+        ...state.groups,
+        { id: groupId, label, itemIds, collapsed: false },
+      ],
+      items: state.items.map((item) =>
+        itemIds.includes(item.id) ? { ...item, groupId } : item
+      ),
+    }));
+    get()._scheduleSave();
+  },
+
+  ungroupItems: (groupId) => {
+    set((state) => ({
+      groups: state.groups.filter((g) => g.id !== groupId),
+      items: state.items.map((item) =>
+        item.groupId === groupId ? { ...item, groupId: undefined } : item
+      ),
+    }));
+    get()._scheduleSave();
+  },
+
+  // Undo/Redo
+  _undoStack: [],
+  _redoStack: [],
+
+  _pushUndoState: () => {
+    const { items, _undoStack } = get();
+    const stack = [..._undoStack, items].slice(-50); // Keep last 50 states
+    set({ _undoStack: stack, _redoStack: [] });
+  },
+
+  undo: () => {
+    const { _undoStack, items } = get();
+    if (_undoStack.length === 0) return;
+    const prev = _undoStack[_undoStack.length - 1];
+    set({
+      _undoStack: _undoStack.slice(0, -1),
+      _redoStack: [...get()._redoStack, items],
+      items: prev,
+    });
+    get()._scheduleSave();
+  },
+
+  redo: () => {
+    const { _redoStack, items } = get();
+    if (_redoStack.length === 0) return;
+    const next = _redoStack[_redoStack.length - 1];
+    set({
+      _redoStack: _redoStack.slice(0, -1),
+      _undoStack: [...get()._undoStack, items],
+      items: next,
+    });
+    get()._scheduleSave();
+  },
+
+  // Duplicate
+  duplicateItems: (ids) => {
+    get()._pushUndoState();
+    set((state) => {
+      const newItems = state.items
+        .filter((item) => ids.includes(item.id))
+        .map((item) => ({
+          ...item,
+          id: uuidv4(),
+          position: { x: item.position.x + 30, y: item.position.y + 30 },
+          createdAt: new Date(),
+        }));
+      return { items: [...state.items, ...newItems] };
+    });
     get()._scheduleSave();
   },
 

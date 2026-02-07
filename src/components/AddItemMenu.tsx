@@ -3,7 +3,7 @@ import { useBoardStore } from '../store/boardStore';
 import { parseVideoUrl } from '../utils/video';
 import { fileToDataUrl, isImageFile, isGifFile, isVideoFile, getFileExtension } from '../utils/files';
 import { saveMedia } from '../db/boardRepository';
-import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData } from '../types';
+import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData, ColorData } from '../types';
 
 interface AddItemMenuProps {
   position: { x: number; y: number };
@@ -119,8 +119,24 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
         </div>
       ) : (
         <>
-          <MenuItem icon="📁" label="Upload File" onClick={() => fileInputRef.current?.click()} />
-          <MenuItem icon="🔗" label="Paste URL" onClick={() => setShowUrlInput(true)} />
+          <MenuItem icon="+" label="Upload File" onClick={() => fileInputRef.current?.click()} />
+          <MenuItem icon="~" label="Paste URL" onClick={() => setShowUrlInput(true)} />
+          <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
+          <MenuItem icon="<>" label="Code Snippet" onClick={() => {
+            const data: CodeData = { language: 'html', code: '', showPreview: true };
+            addItem('code', data, canvasPosition);
+            onClose();
+          }} />
+          <MenuItem icon="T" label="Text Note" onClick={() => {
+            const data: TextData = { content: '' };
+            addItem('text', data, canvasPosition);
+            onClose();
+          }} />
+          <MenuItem icon="#" label="Color Swatch" onClick={() => {
+            const data: ColorData = { hex: '#4A90FF' };
+            addItem('color', data, canvasPosition);
+            onClose();
+          }} />
           <input
             ref={fileInputRef}
             type="file"

@@ -20,14 +20,14 @@ import { Sidebar } from './Sidebar';
 import { fileToDataUrl, isImageFile, isGifFile, isVideoFile, getFileExtension } from '../utils/files';
 import { parseVideoUrl } from '../utils/video';
 import { saveMedia } from '../db/boardRepository';
-import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData } from '../types';
+import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData } from '../types';
 
 const nodeTypes = {
   boardItem: BoardNode,
 };
 
 function CanvasInner() {
-  const { items, addItem, updateItemPosition, updateItemSize, removeItem, activeBoardId } =
+  const { items, addItem, updateItemPosition, updateItemSize, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery } =
     useBoardStore();
   const viewport = useViewport();
   const { screenToFlowPosition } = useReactFlow();
@@ -208,6 +208,77 @@ function CanvasInner() {
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
   }, [handlePaste]);
+
+  // Keyboard shortcuts
+  const handleKeyboard = useCallback(
+    (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+      const meta = e.metaKey || e.ctrlKey;
+
+      if (meta && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (meta && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        redo();
+      } else if (meta && e.key === 'f') {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>('input[placeholder="Search..."]');
+        searchInput?.focus();
+      } else if (meta && e.key === 'n') {
+        e.preventDefault();
+        // handled at app level
+      }
+
+      // Shortcuts that shouldn't fire when typing in inputs
+      if (isInput) return;
+
+      if (meta && e.key === 'd') {
+        e.preventDefault();
+        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
+        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        if (ids.length > 0) duplicateItems(ids);
+      } else if (meta && e.key === 'g' && !e.shiftKey) {
+        e.preventDefault();
+        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
+        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        if (ids.length > 1) groupItems(ids);
+      } else if (meta && e.key === 'g' && e.shiftKey) {
+        e.preventDefault();
+        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
+        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        if (ids.length > 0) {
+          const item = items.find((i) => ids.includes(i.id) && i.groupId);
+          if (item?.groupId) ungroupItems(item.groupId);
+        }
+      } else if (e.key === ']') {
+        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
+        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        ids.forEach((id) => bringToFront(id));
+      } else if (e.key === '[') {
+        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
+        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        ids.forEach((id) => sendToBack(id));
+      } else if (e.key === 't' || e.key === 'T') {
+        const flowPos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        const data: TextData = { content: '' };
+        addItem('text', data, flowPos);
+      } else if (e.key === 'c' && !meta) {
+        const flowPos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        const data: CodeData = { language: 'html', code: '', showPreview: true };
+        addItem('code', data, flowPos);
+      } else if (e.key === 'Escape') {
+        setSearchQuery('');
+      }
+    },
+    [undo, redo, duplicateItems, groupItems, ungroupItems, bringToFront, sendToBack, addItem, screenToFlowPosition, items, setSearchQuery]
+  );
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyboard);
+    return () => document.removeEventListener('keydown', handleKeyboard);
+  }, [handleKeyboard]);
 
   return (
     <div className="w-full h-full relative">
