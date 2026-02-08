@@ -37,15 +37,18 @@ function CanvasInner() {
   } | null>(null);
 
   const nodes: Node[] = useMemo(
-    () =>
-      items.map((item) => ({
+    () => {
+      const result = items.map((item) => ({
         id: item.id,
         type: 'boardItem',
         position: item.position,
         data: { boardItem: item },
         style: { width: item.size.width, height: item.size.height },
         zIndex: item.zIndex,
-      })),
+      }));
+      console.log('[Canvasly] Canvas nodes recomputed', { itemCount: items.length, nodeCount: result.length, nodes: result.map(n => ({ id: n.id, type: n.type, position: n.position })) });
+      return result;
+    },
     [items]
   );
 
@@ -96,7 +99,9 @@ function CanvasInner() {
 
   const handleFileDrop = useCallback(
     async (file: File, flowPos: { x: number; y: number }) => {
+      console.log('[Canvasly] handleFileDrop called', { name: file.name, type: file.type, size: file.size, flowPos, activeBoardId });
       const ext = getFileExtension(file.name);
+      console.log('[Canvasly] handleFileDrop ext:', ext);
 
       if (ext === 'json') {
         // Lottie JSON
@@ -134,12 +139,16 @@ function CanvasInner() {
         };
         addItem('video-upload', data, flowPos);
       } else if (isGifFile(file) || isImageFile(file)) {
+        console.log('[Canvasly] handleFileDrop: matched as image/gif, converting to dataUrl...');
         const dataUrl = await fileToDataUrl(file);
         const data: ImageItemData = {
           url: dataUrl,
           fileName: file.name,
         };
+        console.log('[Canvasly] handleFileDrop: calling addItem("image")', { fileName: file.name, dataUrlLength: dataUrl.length });
         addItem('image', data, flowPos);
+      } else {
+        console.warn('[Canvasly] handleFileDrop: file did not match any known type', { name: file.name, type: file.type, ext });
       }
     },
     [addItem, activeBoardId]
@@ -150,7 +159,12 @@ function CanvasInner() {
       event.preventDefault();
       const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const files = event.dataTransfer.files;
+      console.log('[Canvasly] handleDrop fired', { fileCount: files.length, flowPos });
+      if (files.length === 0) {
+        console.warn('[Canvasly] handleDrop: no files in drop event');
+      }
       for (const file of Array.from(files)) {
+        console.log('[Canvasly] handleDrop: processing file', { name: file.name, type: file.type, size: file.size });
         await handleFileDrop(file, flowPos);
       }
     },
@@ -164,22 +178,27 @@ function CanvasInner() {
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
+      console.log('[Canvasly] handlePaste fired');
       const flowPos = screenToFlowPosition({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
 
       const clipboardItems = event.clipboardData?.items;
+      console.log('[Canvasly] handlePaste clipboardItems count:', clipboardItems?.length ?? 0);
       if (clipboardItems) {
         for (const item of Array.from(clipboardItems)) {
+          console.log('[Canvasly] handlePaste item:', { kind: item.kind, type: item.type });
           if (item.type.startsWith('image/')) {
             const file = item.getAsFile();
+            console.log('[Canvasly] handlePaste image file:', file ? { name: file.name, type: file.type, size: file.size } : null);
             if (file) {
               const dataUrl = await fileToDataUrl(file);
               const data: ImageItemData = {
                 url: dataUrl,
                 fileName: 'Pasted Image',
               };
+              console.log('[Canvasly] handlePaste: calling addItem("image") for pasted image');
               addItem('image', data, flowPos);
               return;
             }
@@ -284,7 +303,7 @@ function CanvasInner() {
     <div className="w-full h-full relative">
       <TopBar />
       <Sidebar />
-      <div className="absolute inset-0" style={{ top: 40, bottom: 32 }}>
+      <div className="absolute inset-0" style={{ top: 48, bottom: 36 }}>
         <ReactFlow
           nodes={nodes}
           edges={[]}
@@ -304,7 +323,7 @@ function CanvasInner() {
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
         >
-          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#333333" />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--border)" />
           <MiniMap
             nodeColor="var(--bg-tertiary)"
             maskColor="rgba(0,0,0,0.5)"

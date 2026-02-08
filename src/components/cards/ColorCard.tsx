@@ -51,7 +51,7 @@ export function ColorCard({ id, data, width, height }: ColorCardProps) {
             autoFocus
           />
         ) : null}
-        <span className="text-sm font-mono font-medium" style={{ color: textColor }}>
+        <span className="text-sm font-medium" style={{ color: textColor, fontFamily: 'var(--font-mono)' }}>
           {data.hex.toUpperCase()}
         </span>
         {data.label && (

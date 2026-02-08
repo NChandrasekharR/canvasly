@@ -41,10 +41,7 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
   useEffect(() => {
     if (!data.showPreview || !iframeRef.current) return;
     const html = buildPreviewHtml(code, data.language);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    iframeRef.current.src = url;
-    return () => URL.revokeObjectURL(url);
+    iframeRef.current.srcdoc = html;
   }, [code, data.language, data.showPreview, previewKey]);
 
   const handleCodeChange = (value: string) => {
@@ -115,9 +112,10 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
             <textarea
               value={code}
               onChange={(e) => handleCodeChange(e.target.value)}
-              className="w-full h-full p-2 resize-none outline-none text-xs font-mono"
+              className="w-full h-full p-2 resize-none outline-none text-xs"
               style={{
-                backgroundColor: '#1e1e1e',
+                fontFamily: 'var(--font-mono)',
+                backgroundColor: '#0C0C0E',
                 color: '#d4d4d4',
                 borderRight: data.showPreview ? '1px solid var(--border)' : 'none',
               }}

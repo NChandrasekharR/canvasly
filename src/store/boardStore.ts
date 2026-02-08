@@ -160,15 +160,18 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   groups: [],
 
   addItem: (type, data, position, size) => {
+    const itemId = uuidv4();
+    const resolvedSize = size ?? DEFAULT_SIZES[type];
+    console.log('[Canvasly] boardStore.addItem called', { type, itemId, position, size: resolvedSize, activeBoardId: get().activeBoardId, currentItemCount: get().items.length });
     get()._pushUndoState();
     set((state) => ({
       items: [
         ...state.items,
         {
-          id: uuidv4(),
+          id: itemId,
           type,
           position,
-          size: size ?? DEFAULT_SIZES[type],
+          size: resolvedSize,
           zIndex: state.items.length,
           tags: [],
           createdAt: new Date(),
@@ -176,6 +179,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         },
       ],
     }));
+    console.log('[Canvasly] boardStore.addItem done, new item count:', get().items.length);
     get()._scheduleSave();
   },
 

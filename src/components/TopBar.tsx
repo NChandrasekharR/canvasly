@@ -1,6 +1,26 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
 import { exportBoard, downloadBlob } from '../utils/exportImport';
+
+/* ─── SVG Icons ─── */
+const IconHome = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 6.5 8 2l6 4.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6.5Z"/><path d="M6 14V9h4v5"/></svg>
+);
+const IconSearch = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m13 13-2.5-2.5"/></svg>
+);
+const IconTag = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M1.5 9.2V2.5A1 1 0 0 1 2.5 1.5h6.7a1 1 0 0 1 .7.3l5.3 5.3a1 1 0 0 1 0 1.4l-5.3 5.3a1 1 0 0 1-1.4 0L1.8 9.9a1 1 0 0 1-.3-.7Z"/><circle cx="5.5" cy="5.5" r="1" fill="currentColor"/></svg>
+);
+const IconExport = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 10V2M5 5l3-3 3 3M3 12v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1"/></svg>
+);
+const IconChevron = () => (
+  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m4 6 4 4 4-4"/></svg>
+);
+const IconX = () => (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+);
 
 export function TopBar() {
   const { activeBoardId, activeBoardName, renameBoard, setView } = useBoardStore();
@@ -9,6 +29,7 @@ export function TopBar() {
   const [name, setName] = useState(activeBoardName);
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const tagDropdownRef = useRef<HTMLDivElement>(null);
 
   const submitName = async () => {
     if (activeBoardId && name.trim()) {
@@ -17,27 +38,55 @@ export function TopBar() {
     setEditing(false);
   };
 
+  // Close tag dropdown on outside click
+  useEffect(() => {
+    if (!showTagDropdown) return;
+    function handleClick(e: MouseEvent) {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+        setShowTagDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showTagDropdown]);
+
   const tags = getAllTags();
 
   return (
     <div
-      className="absolute top-0 left-0 right-0 h-10 flex items-center justify-between px-4 z-10 select-none"
+      className="absolute top-0 left-0 right-0 h-12 flex items-center justify-between px-4 z-10 select-none"
       style={{
         backgroundColor: 'var(--bg-secondary)',
         borderBottom: '1px solid var(--border)',
       }}
     >
-      {/* Left: logo + board name */}
-      <div className="flex items-center gap-3">
+      {/* Left: navigation + board name */}
+      <div className="flex items-center gap-2.5">
         <button
-          className="font-bold text-sm tracking-wide cursor-pointer"
-          style={{ color: 'var(--accent)' }}
+          className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer btn-ghost"
+          style={{ color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
           onClick={() => setView('home')}
-          title="Back to Home"
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+          data-tooltip="Back to Home"
+          data-tooltip-pos="bottom"
         >
-          MotionBoard
+          <IconHome />
         </button>
-        <span style={{ color: 'var(--border)' }}>|</span>
+        <div
+          className="w-px h-5"
+          style={{ backgroundColor: 'var(--border)' }}
+        />
+        <span
+          className="text-xs font-bold tracking-wide"
+          style={{ fontFamily: 'var(--font-display)', color: 'var(--accent)' }}
+        >
+          MB
+        </span>
+        <div
+          className="w-px h-5"
+          style={{ backgroundColor: 'var(--border)' }}
+        />
         {editing ? (
           <input
             value={name}
@@ -47,82 +96,94 @@ export function TopBar() {
               if (e.key === 'Enter') submitName();
               if (e.key === 'Escape') setEditing(false);
             }}
-            className="text-sm px-1 py-0.5 rounded outline-none"
+            className="text-sm font-medium px-2 py-1 rounded-md outline-none"
             style={{
               backgroundColor: 'var(--bg-tertiary)',
               color: 'var(--text-primary)',
               border: '1px solid var(--accent)',
+              minWidth: '120px',
             }}
             autoFocus
           />
         ) : (
-          <span
-            className="text-sm cursor-pointer hover:underline"
+          <button
+            className="text-sm font-medium px-2 py-1 rounded-md cursor-pointer btn-ghost"
             style={{ color: 'var(--text-primary)' }}
             onClick={() => {
               setName(activeBoardName);
               setEditing(true);
             }}
+            data-tooltip="Click to rename"
+            data-tooltip-pos="bottom"
           >
             {activeBoardName}
-          </span>
+          </button>
         )}
       </div>
 
-      {/* Right: tag filter + search */}
+      {/* Right: tag filter + search + export */}
       <div className="flex items-center gap-2">
         {/* Tag filter */}
-        <div className="relative">
+        <div className="relative" ref={tagDropdownRef}>
           <button
-            className="text-xs px-2 py-1 rounded cursor-pointer"
+            className="h-8 px-2.5 rounded-lg text-xs font-medium cursor-pointer flex items-center gap-1.5 transition-all"
             style={{
-              backgroundColor: tagFilter ? 'var(--accent)' : 'var(--bg-tertiary)',
-              color: tagFilter ? 'white' : 'var(--text-secondary)',
-              border: '1px solid var(--border)',
+              backgroundColor: tagFilter ? 'var(--secondary-muted)' : 'var(--bg-tertiary)',
+              color: tagFilter ? 'var(--secondary)' : 'var(--text-secondary)',
+              border: `1px solid ${tagFilter ? 'var(--secondary)' : 'var(--border)'}`,
             }}
             onClick={() => setShowTagDropdown(!showTagDropdown)}
           >
+            <IconTag />
             {tagFilter ? `#${tagFilter}` : 'Tags'}
+            <IconChevron />
           </button>
           {showTagDropdown && (
             <div
-              className="absolute top-full right-0 mt-1 rounded-lg shadow-xl py-1 min-w-[120px] z-50"
+              className="absolute top-full right-0 mt-1.5 rounded-lg py-1 min-w-[160px] z-50 animate-scale-in"
               style={{
                 backgroundColor: 'var(--bg-secondary)',
                 border: '1px solid var(--border)',
+                boxShadow: 'var(--shadow)',
               }}
             >
               <button
-                className="w-full text-left px-3 py-1.5 text-xs cursor-pointer"
-                style={{ color: 'var(--text-secondary)' }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)')}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                className="w-full text-left px-3 py-2 text-xs font-medium cursor-pointer btn-ghost flex items-center gap-2"
+                style={{ color: tagFilter ? 'var(--text-secondary)' : 'var(--accent)' }}
                 onClick={() => {
                   setTagFilter(null);
                   setShowTagDropdown(false);
                 }}
               >
-                All
+                All items
+                {!tagFilter && (
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto' }}><path d="m3 8 4 4 6-8"/></svg>
+                )}
               </button>
+              {tags.length > 0 && (
+                <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
+              )}
               {tags.map((tag) => (
                 <button
                   key={tag}
-                  className="w-full text-left px-3 py-1.5 text-xs cursor-pointer"
+                  className="w-full text-left px-3 py-2 text-xs cursor-pointer btn-ghost flex items-center gap-2"
                   style={{
-                    color: tagFilter === tag ? 'var(--accent)' : 'var(--text-primary)',
+                    color: tagFilter === tag ? 'var(--secondary)' : 'var(--text-primary)',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                   onClick={() => {
                     setTagFilter(tag);
                     setShowTagDropdown(false);
                   }}
                 >
-                  #{tag}
+                  <span style={{ color: 'var(--text-tertiary)' }}>#</span>
+                  {tag}
+                  {tagFilter === tag && (
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto' }}><path d="m3 8 4 4 6-8"/></svg>
+                  )}
                 </button>
               ))}
               {tags.length === 0 && (
-                <span className="block px-3 py-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <span className="block px-3 py-2 text-xs italic" style={{ color: 'var(--text-tertiary)' }}>
                   No tags yet
                 </span>
               )}
@@ -131,23 +192,41 @@ export function TopBar() {
         </div>
 
         {/* Search */}
-        <input
-          ref={searchRef}
-          type="text"
-          placeholder="Search..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="text-xs px-2 py-1 rounded outline-none w-32"
-          style={{
-            backgroundColor: 'var(--bg-tertiary)',
-            color: 'var(--text-primary)',
-            border: '1px solid var(--border)',
-          }}
-        />
+        <div className="relative flex items-center">
+          <div className="absolute left-2.5 pointer-events-none" style={{ color: 'var(--text-tertiary)' }}>
+            <IconSearch />
+          </div>
+          <input
+            ref={searchRef}
+            type="text"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-8 text-xs pl-8 pr-7 rounded-lg outline-none w-44 transition-all"
+            style={{
+              backgroundColor: 'var(--bg-tertiary)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border)',
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.width = '220px'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; if (!searchQuery) e.currentTarget.style.width = '176px'; }}
+          />
+          {searchQuery && (
+            <button
+              className="absolute right-2 cursor-pointer"
+              style={{ color: 'var(--text-tertiary)' }}
+              onClick={() => setSearchQuery('')}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+            >
+              <IconX />
+            </button>
+          )}
+        </div>
 
         {/* Export */}
         <button
-          className="text-xs px-2 py-1 rounded cursor-pointer"
+          className="h-8 px-2.5 rounded-lg text-xs font-medium cursor-pointer flex items-center gap-1.5 btn-ghost"
           style={{
             backgroundColor: 'var(--bg-tertiary)',
             color: 'var(--text-secondary)',
@@ -158,7 +237,10 @@ export function TopBar() {
             const blob = await exportBoard(activeBoardId);
             downloadBlob(blob, `${activeBoardName}.motionboard`);
           }}
+          data-tooltip="Export board"
+          data-tooltip-pos="bottom"
         >
+          <IconExport />
           Export
         </button>
       </div>

@@ -22,7 +22,7 @@ export function TextCard({ id, data, width, height }: TextCardProps) {
 
   return (
     <CardWrapper id={id} title="Note" typeIcon="T" width={width} height={height}>
-      <div className="w-full h-full p-2 overflow-auto">
+      <div className="w-full h-full p-3 overflow-auto">
         {editing ? (
           <textarea
             value={content}

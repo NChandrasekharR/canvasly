@@ -31,6 +31,7 @@ type BoardNodeData = {
 function BoardNodeInner({ data, selected }: NodeProps) {
   const nodeData = data as unknown as BoardNodeData;
   const item = nodeData.boardItem;
+  console.log('[Canvasly] BoardNode render', { id: item.id, type: item.type, position: item.position, size: item.size });
   const updateItemSize = useBoardStore((s) => s.updateItemSize);
   const searchQuery = useBoardStore((s) => s.searchQuery);
   const tagFilter = useBoardStore((s) => s.tagFilter);

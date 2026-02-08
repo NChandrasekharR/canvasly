@@ -29,22 +29,24 @@ export function TagEditor({ itemId, tags }: TagEditorProps) {
       {tags.map((tag) => (
         <span
           key={tag}
-          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs"
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors"
           style={{
-            backgroundColor: 'var(--accent)',
-            color: 'white',
-            opacity: 0.9,
+            backgroundColor: 'var(--secondary-muted)',
+            color: 'var(--secondary)',
           }}
         >
-          {tag}
+          #{tag}
           <button
             onClick={(e) => {
               e.stopPropagation();
               removeTag(tag);
             }}
-            className="ml-0.5 cursor-pointer hover:text-red-200"
+            className="cursor-pointer transition-colors rounded-full w-3.5 h-3.5 flex items-center justify-center"
+            style={{ color: 'var(--secondary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--secondary)'; }}
           >
-            x
+            <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
           </button>
         </span>
       ))}
@@ -55,16 +57,16 @@ export function TagEditor({ itemId, tags }: TagEditorProps) {
           onBlur={addTag}
           onKeyDown={(e) => {
             if (e.key === 'Enter') addTag();
-            if (e.key === 'Escape') setShowInput(false);
+            if (e.key === 'Escape') { setShowInput(false); setNewTag(''); }
           }}
-          className="px-1 py-0.5 rounded text-xs outline-none w-16"
+          className="px-2 py-0.5 rounded-full text-[10px] outline-none w-16"
           style={{
             backgroundColor: 'var(--bg-tertiary)',
             color: 'var(--text-primary)',
-            border: '1px solid var(--border)',
+            border: '1px solid var(--secondary)',
           }}
           autoFocus
-          placeholder="tag"
+          placeholder="tag name"
         />
       ) : (
         <button
@@ -72,10 +74,12 @@ export function TagEditor({ itemId, tags }: TagEditorProps) {
             e.stopPropagation();
             setShowInput(true);
           }}
-          className="px-1 py-0.5 rounded text-xs cursor-pointer"
-          style={{ color: 'var(--text-secondary)' }}
+          className="px-2 py-0.5 rounded-full text-[10px] cursor-pointer transition-colors font-medium"
+          style={{ color: 'var(--text-tertiary)', border: '1px dashed var(--border)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--secondary)'; e.currentTarget.style.borderColor = 'var(--secondary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
         >
-          +tag
+          + tag
         </button>
       )}
     </div>
