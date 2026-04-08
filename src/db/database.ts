@@ -10,6 +10,7 @@ export interface DBBoard {
   groups: string; // JSON-serialized Group[]
   thumbnail?: Blob;
   storageSize?: number;
+  itemCount?: number;
 }
 
 export interface DBMedia {

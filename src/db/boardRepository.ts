@@ -35,7 +35,7 @@ export async function listBoards(): Promise<BoardMeta[]> {
     name: b.name,
     createdAt: b.createdAt,
     updatedAt: b.updatedAt,
-    itemCount: JSON.parse(b.items).length,
+    itemCount: b.itemCount ?? 0,
     storageSize: b.storageSize,
     thumbnail: b.thumbnail,
   }));
@@ -95,8 +95,9 @@ export async function saveBoard(
   if (data.viewport !== undefined) update.viewport = data.viewport;
   if (data.name !== undefined) update.name = data.name;
 
-  // Calculate approximate storage size
+  // Calculate approximate storage size and item count
   update.storageSize = new Blob([update.items!]).size;
+  update.itemCount = data.items.length;
 
   await db.boards.update(id, update);
 }

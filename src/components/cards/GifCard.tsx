@@ -7,10 +7,11 @@ interface GifCardProps {
   data: ImageItemData;
   width: number;
   height: number;
+  blobUrl?: string;
 }
 
-export function GifCard({ id, data, width, height }: GifCardProps) {
-  const src = data.url ?? '';
+export function GifCard({ id, data, width, height, blobUrl }: GifCardProps) {
+  const src = blobUrl ?? data.url ?? '';
   const title = data.fileName ?? 'GIF';
   const [failed, setFailed] = useState(false);
 

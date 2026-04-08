@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
 import { parseVideoUrl } from '../utils/video';
-import { fileToDataUrl, isImageFile, isGifFile, isVideoFile, getFileExtension } from '../utils/files';
+import { isImageFile, isGifFile, isVideoFile, getFileExtension, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../utils/files';
 import { saveMedia } from '../db/boardRepository';
 import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData, ColorData } from '../types';
 
@@ -50,19 +50,28 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
   }, [onClose]);
 
   const handleFileUpload = async (files: FileList | null) => {
-    console.log('[Canvasly] AddItemMenu.handleFileUpload called', { fileCount: files?.length ?? 0, activeBoardId });
-    if (!files) { console.warn('[Canvasly] AddItemMenu.handleFileUpload: files is null'); return; }
+    if (!files) return;
     for (const file of Array.from(files)) {
-      console.log('[Canvasly] AddItemMenu.handleFileUpload: processing', { name: file.name, type: file.type, size: file.size });
+      // File size validation
+      if (file.size > MAX_FILE_SIZE) {
+        console.warn(`[Canvasly] File "${file.name}" exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit, skipping`);
+        continue;
+      }
+      if (file.size > WARN_FILE_SIZE) {
+        console.warn(`[Canvasly] File "${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB)`);
+      }
+
       const ext = getFileExtension(file.name);
 
       if (ext === 'json') {
-        const text = await file.text();
         try {
+          const text = await file.text();
           const animationData = JSON.parse(text);
           const data: LottieData = { animationData, speed: 1, fileName: file.name };
           addItem('lottie', data, canvasPosition);
-        } catch { /* not valid JSON */ }
+        } catch {
+          console.warn('[Canvasly] Failed to parse JSON file as Lottie animation');
+        }
       } else if (ext === 'riv') {
         if (!activeBoardId) continue;
         const blobId = await saveMedia(activeBoardId, file, file.name, 'application/octet-stream');
@@ -76,13 +85,12 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
         };
         addItem('video-upload', data, canvasPosition);
       } else if (isGifFile(file) || isImageFile(file)) {
-        console.log('[Canvasly] AddItemMenu: matched as image/gif, converting to dataUrl...');
-        const dataUrl = await fileToDataUrl(file);
-        const data: ImageItemData = { url: dataUrl, fileName: file.name };
-        console.log('[Canvasly] AddItemMenu: calling addItem("image")', { fileName: file.name, dataUrlLength: dataUrl.length, canvasPosition });
+        if (!activeBoardId) continue;
+        const blobId = await saveMedia(activeBoardId, file, file.name, file.type || 'image/png');
+        const data: ImageItemData = { blobId, fileName: file.name };
         addItem('image', data, canvasPosition);
       } else {
-        console.warn('[Canvasly] AddItemMenu: file did not match any type', { name: file.name, type: file.type, ext });
+        console.warn('[Canvasly] Unsupported file type:', file.name);
       }
     }
     onClose();

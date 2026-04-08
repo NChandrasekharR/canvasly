@@ -234,8 +234,12 @@ export function TopBar() {
           }}
           onClick={async () => {
             if (!activeBoardId) return;
-            const blob = await exportBoard(activeBoardId);
-            downloadBlob(blob, `${activeBoardName}.motionboard`);
+            try {
+              const blob = await exportBoard(activeBoardId);
+              downloadBlob(blob, `${activeBoardName}.motionboard`);
+            } catch (err) {
+              console.error('[Canvasly] Export failed:', err);
+            }
           }}
           data-tooltip="Export board"
           data-tooltip-pos="bottom"

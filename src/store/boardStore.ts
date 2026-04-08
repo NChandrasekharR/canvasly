@@ -15,6 +15,16 @@ import {
 
 type View = 'home' | 'canvas';
 
+interface UndoSnapshot {
+  items: BoardItem[];
+  groups: Group[];
+}
+
+// Module-level save state (avoids polluting Zustand state and triggering re-renders)
+let _saveTimeout: ReturnType<typeof setTimeout> | null = null;
+let _saveInFlight = false;
+let _savePending = false;
+
 interface BoardState {
   // Navigation
   view: View;
@@ -65,8 +75,8 @@ interface BoardState {
   ungroupItems: (groupId: string) => void;
 
   // Undo/Redo
-  _undoStack: BoardItem[][];
-  _redoStack: BoardItem[][];
+  _undoStack: UndoSnapshot[];
+  _redoStack: UndoSnapshot[];
   _pushUndoState: () => void;
   undo: () => void;
   redo: () => void;
@@ -82,8 +92,11 @@ interface BoardState {
   theme: 'dark' | 'light';
   toggleTheme: () => void;
 
+  // Viewport (persisted per board)
+  _viewport: { x: number; y: number; zoom: number };
+  updateViewport: (viewport: { x: number; y: number; zoom: number }) => void;
+
   // Auto-save
-  _saveTimeout: ReturnType<typeof setTimeout> | null;
   _scheduleSave: () => void;
 }
 
@@ -149,6 +162,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       activeBoardName: board.name,
       items: board.items,
       groups: board.groups,
+      _viewport: board.viewport,
       view: 'canvas',
       _undoStack: [],
       _redoStack: [],
@@ -162,7 +176,6 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   addItem: (type, data, position, size) => {
     const itemId = uuidv4();
     const resolvedSize = size ?? DEFAULT_SIZES[type];
-    console.log('[Canvasly] boardStore.addItem called', { type, itemId, position, size: resolvedSize, activeBoardId: get().activeBoardId, currentItemCount: get().items.length });
     get()._pushUndoState();
     set((state) => ({
       items: [
@@ -179,7 +192,6 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         },
       ],
     }));
-    console.log('[Canvasly] boardStore.addItem done, new item count:', get().items.length);
     get()._scheduleSave();
   },
 
@@ -281,6 +293,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   // Grouping
   groupItems: (itemIds, label) => {
     const groupId = uuidv4();
+    get()._pushUndoState();
     set((state) => ({
       groups: [
         ...state.groups,
@@ -294,6 +307,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   ungroupItems: (groupId) => {
+    get()._pushUndoState();
     set((state) => ({
       groups: state.groups.filter((g) => g.id !== groupId),
       items: state.items.map((item) =>
@@ -303,36 +317,38 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     get()._scheduleSave();
   },
 
-  // Undo/Redo
+  // Undo/Redo — snapshots include both items and groups
   _undoStack: [],
   _redoStack: [],
 
   _pushUndoState: () => {
-    const { items, _undoStack } = get();
-    const stack = [..._undoStack, items].slice(-50); // Keep last 50 states
+    const { items, groups, _undoStack } = get();
+    const stack = [..._undoStack, { items, groups }].slice(-50);
     set({ _undoStack: stack, _redoStack: [] });
   },
 
   undo: () => {
-    const { _undoStack, items } = get();
+    const { _undoStack, items, groups } = get();
     if (_undoStack.length === 0) return;
     const prev = _undoStack[_undoStack.length - 1];
     set({
       _undoStack: _undoStack.slice(0, -1),
-      _redoStack: [...get()._redoStack, items],
-      items: prev,
+      _redoStack: [...get()._redoStack, { items, groups }],
+      items: prev.items,
+      groups: prev.groups,
     });
     get()._scheduleSave();
   },
 
   redo: () => {
-    const { _redoStack, items } = get();
+    const { _redoStack, items, groups } = get();
     if (_redoStack.length === 0) return;
     const next = _redoStack[_redoStack.length - 1];
     set({
       _redoStack: _redoStack.slice(0, -1),
-      _undoStack: [...get()._undoStack, items],
-      items: next,
+      _undoStack: [...get()._undoStack, { items, groups }],
+      items: next.items,
+      groups: next.groups,
     });
     get()._scheduleSave();
   },
@@ -370,17 +386,35 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     localStorage.setItem('motionboard-theme', newTheme);
   },
 
-  // Auto-save (debounced 500ms)
-  _saveTimeout: null,
+  // Viewport
+  _viewport: { x: 0, y: 0, zoom: 1 },
+  updateViewport: (viewport) => {
+    set({ _viewport: viewport });
+    get()._scheduleSave();
+  },
+
+  // Auto-save (debounced 500ms, with in-flight protection)
   _scheduleSave: () => {
-    const state = get();
-    if (state._saveTimeout) clearTimeout(state._saveTimeout);
-    const timeout = setTimeout(async () => {
-      const { activeBoardId, items, groups } = get();
-      if (!activeBoardId) return;
-      await saveBoard(activeBoardId, { items, groups });
-      await get().refreshStorageUsage();
+    if (_saveTimeout) clearTimeout(_saveTimeout);
+    _saveTimeout = setTimeout(async () => {
+      _saveTimeout = null;
+      if (_saveInFlight) {
+        _savePending = true;
+        return;
+      }
+      _saveInFlight = true;
+      try {
+        const { activeBoardId, items, groups, _viewport } = get();
+        if (!activeBoardId) return;
+        await saveBoard(activeBoardId, { items, groups, viewport: _viewport });
+        await get().refreshStorageUsage();
+      } finally {
+        _saveInFlight = false;
+        if (_savePending) {
+          _savePending = false;
+          get()._scheduleSave();
+        }
+      }
     }, 500);
-    set({ _saveTimeout: timeout });
   },
 }));

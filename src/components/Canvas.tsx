@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
@@ -10,6 +10,7 @@ import {
   type Node,
   type NodeChange,
   type OnNodesChange,
+  type Viewport,
 } from '@xyflow/react';
 import { useBoardStore } from '../store/boardStore';
 import { BoardNode } from './BoardNode';
@@ -17,7 +18,7 @@ import { AddItemMenu } from './AddItemMenu';
 import { TopBar } from './TopBar';
 import { BottomBar } from './BottomBar';
 import { Sidebar } from './Sidebar';
-import { fileToDataUrl, isImageFile, isGifFile, isVideoFile, getFileExtension } from '../utils/files';
+import { isImageFile, isGifFile, isVideoFile, getFileExtension, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../utils/files';
 import { parseVideoUrl } from '../utils/video';
 import { saveMedia } from '../db/boardRepository';
 import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData } from '../types';
@@ -27,28 +28,32 @@ const nodeTypes = {
 };
 
 function CanvasInner() {
-  const { items, addItem, updateItemPosition, updateItemSize, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery } =
+  const { items, addItem, updateItemPosition, updateItemSize, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
     useBoardStore();
+  const storedViewport = useBoardStore((s) => s._viewport);
   const viewport = useViewport();
-  const { screenToFlowPosition } = useReactFlow();
+  const reactFlow = useReactFlow();
   const [menuState, setMenuState] = useState<{
     screen: { x: number; y: number };
     canvas: { x: number; y: number };
   } | null>(null);
 
+  // Ref for items so keyboard handler doesn't depend on items array
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
   const nodes: Node[] = useMemo(
-    () => {
-      const result = items.map((item) => ({
+    () =>
+      items.map((item) => ({
         id: item.id,
         type: 'boardItem',
         position: item.position,
         data: { boardItem: item },
         style: { width: item.size.width, height: item.size.height },
         zIndex: item.zIndex,
-      }));
-      console.log('[Canvasly] Canvas nodes recomputed', { itemCount: items.length, nodeCount: result.length, nodes: result.map(n => ({ id: n.id, type: n.type, position: n.position })) });
-      return result;
-    },
+      })),
     [items]
   );
 
@@ -74,18 +79,18 @@ function CanvasInner() {
 
   const handleDoubleClick = useCallback(
     (event: React.MouseEvent) => {
-      const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const flowPos = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       setMenuState({
         screen: { x: event.clientX, y: event.clientY },
         canvas: flowPos,
       });
     },
-    [screenToFlowPosition]
+    [reactFlow]
   );
 
   const handleAddButtonClick = useCallback(
     (e: React.MouseEvent) => {
-      const flowPos = screenToFlowPosition({
+      const flowPos = reactFlow.screenToFlowPosition({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
@@ -94,19 +99,26 @@ function CanvasInner() {
         canvas: flowPos,
       });
     },
-    [screenToFlowPosition]
+    [reactFlow]
   );
 
   const handleFileDrop = useCallback(
     async (file: File, flowPos: { x: number; y: number }) => {
-      console.log('[Canvasly] handleFileDrop called', { name: file.name, type: file.type, size: file.size, flowPos, activeBoardId });
+      // File size validation
+      if (file.size > MAX_FILE_SIZE) {
+        console.warn(`[Canvasly] File "${file.name}" exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit, skipping`);
+        return;
+      }
+      if (file.size > WARN_FILE_SIZE) {
+        console.warn(`[Canvasly] File "${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB)`);
+      }
+
       const ext = getFileExtension(file.name);
-      console.log('[Canvasly] handleFileDrop ext:', ext);
 
       if (ext === 'json') {
         // Lottie JSON
-        const text = await file.text();
         try {
+          const text = await file.text();
           const animationData = JSON.parse(text);
           const data: LottieData = {
             animationData,
@@ -115,10 +127,9 @@ function CanvasInner() {
           };
           addItem('lottie', data, flowPos);
         } catch {
-          // Not valid JSON, ignore
+          console.warn('[Canvasly] Failed to parse JSON file as Lottie animation');
         }
       } else if (ext === 'riv') {
-        // Rive file
         if (!activeBoardId) return;
         const blobId = await saveMedia(activeBoardId, file, file.name, 'application/octet-stream');
         const data: RiveData = {
@@ -139,16 +150,15 @@ function CanvasInner() {
         };
         addItem('video-upload', data, flowPos);
       } else if (isGifFile(file) || isImageFile(file)) {
-        console.log('[Canvasly] handleFileDrop: matched as image/gif, converting to dataUrl...');
-        const dataUrl = await fileToDataUrl(file);
+        if (!activeBoardId) return;
+        const blobId = await saveMedia(activeBoardId, file, file.name, file.type || 'image/png');
         const data: ImageItemData = {
-          url: dataUrl,
+          blobId,
           fileName: file.name,
         };
-        console.log('[Canvasly] handleFileDrop: calling addItem("image")', { fileName: file.name, dataUrlLength: dataUrl.length });
         addItem('image', data, flowPos);
       } else {
-        console.warn('[Canvasly] handleFileDrop: file did not match any known type', { name: file.name, type: file.type, ext });
+        console.warn('[Canvasly] Unsupported file type:', file.name);
       }
     },
     [addItem, activeBoardId]
@@ -157,18 +167,13 @@ function CanvasInner() {
   const handleDrop = useCallback(
     async (event: React.DragEvent) => {
       event.preventDefault();
-      const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const flowPos = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const files = event.dataTransfer.files;
-      console.log('[Canvasly] handleDrop fired', { fileCount: files.length, flowPos });
-      if (files.length === 0) {
-        console.warn('[Canvasly] handleDrop: no files in drop event');
-      }
       for (const file of Array.from(files)) {
-        console.log('[Canvasly] handleDrop: processing file', { name: file.name, type: file.type, size: file.size });
         await handleFileDrop(file, flowPos);
       }
     },
-    [screenToFlowPosition, handleFileDrop]
+    [reactFlow, handleFileDrop]
   );
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
@@ -178,27 +183,22 @@ function CanvasInner() {
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
-      console.log('[Canvasly] handlePaste fired');
-      const flowPos = screenToFlowPosition({
+      const flowPos = reactFlow.screenToFlowPosition({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
 
       const clipboardItems = event.clipboardData?.items;
-      console.log('[Canvasly] handlePaste clipboardItems count:', clipboardItems?.length ?? 0);
       if (clipboardItems) {
         for (const item of Array.from(clipboardItems)) {
-          console.log('[Canvasly] handlePaste item:', { kind: item.kind, type: item.type });
           if (item.type.startsWith('image/')) {
             const file = item.getAsFile();
-            console.log('[Canvasly] handlePaste image file:', file ? { name: file.name, type: file.type, size: file.size } : null);
-            if (file) {
-              const dataUrl = await fileToDataUrl(file);
+            if (file && activeBoardId) {
+              const blobId = await saveMedia(activeBoardId, file, 'Pasted Image', file.type);
               const data: ImageItemData = {
-                url: dataUrl,
+                blobId,
                 fileName: 'Pasted Image',
               };
-              console.log('[Canvasly] handlePaste: calling addItem("image") for pasted image');
               addItem('image', data, flowPos);
               return;
             }
@@ -220,7 +220,7 @@ function CanvasInner() {
         }
       }
     },
-    [screenToFlowPosition, addItem]
+    [reactFlow, addItem, activeBoardId]
   );
 
   useEffect(() => {
@@ -228,7 +228,12 @@ function CanvasInner() {
     return () => document.removeEventListener('paste', handlePaste);
   }, [handlePaste]);
 
-  // Keyboard shortcuts
+  // Helper: get selected node IDs using React Flow API (not DOM queries)
+  const getSelectedIds = useCallback((): string[] => {
+    return reactFlow.getNodes().filter((n) => n.selected).map((n) => n.id);
+  }, [reactFlow]);
+
+  // Keyboard shortcuts — uses refs/API to avoid recreating on every item change
   const handleKeyboard = useCallback(
     (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -245,9 +250,6 @@ function CanvasInner() {
         e.preventDefault();
         const searchInput = document.querySelector<HTMLInputElement>('input[placeholder="Search..."]');
         searchInput?.focus();
-      } else if (meta && e.key === 'n') {
-        e.preventDefault();
-        // handled at app level
       }
 
       // Shortcuts that shouldn't fire when typing in inputs
@@ -255,49 +257,53 @@ function CanvasInner() {
 
       if (meta && e.key === 'd') {
         e.preventDefault();
-        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
-        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        const ids = getSelectedIds();
         if (ids.length > 0) duplicateItems(ids);
       } else if (meta && e.key === 'g' && !e.shiftKey) {
         e.preventDefault();
-        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
-        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        const ids = getSelectedIds();
         if (ids.length > 1) groupItems(ids);
       } else if (meta && e.key === 'g' && e.shiftKey) {
         e.preventDefault();
-        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
-        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        const ids = getSelectedIds();
         if (ids.length > 0) {
-          const item = items.find((i) => ids.includes(i.id) && i.groupId);
+          const currentItems = itemsRef.current;
+          const item = currentItems.find((i) => ids.includes(i.id) && i.groupId);
           if (item?.groupId) ungroupItems(item.groupId);
         }
       } else if (e.key === ']') {
-        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
-        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        const ids = getSelectedIds();
         ids.forEach((id) => bringToFront(id));
       } else if (e.key === '[') {
-        const selectedNodes = document.querySelectorAll('.react-flow__node.selected');
-        const ids = Array.from(selectedNodes).map((n) => n.getAttribute('data-id')).filter(Boolean) as string[];
+        const ids = getSelectedIds();
         ids.forEach((id) => sendToBack(id));
       } else if (e.key === 't' || e.key === 'T') {
-        const flowPos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        const flowPos = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
         const data: TextData = { content: '' };
         addItem('text', data, flowPos);
       } else if (e.key === 'c' && !meta) {
-        const flowPos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        const flowPos = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
         const data: CodeData = { language: 'html', code: '', showPreview: true };
         addItem('code', data, flowPos);
       } else if (e.key === 'Escape') {
         setSearchQuery('');
       }
     },
-    [undo, redo, duplicateItems, groupItems, ungroupItems, bringToFront, sendToBack, addItem, screenToFlowPosition, items, setSearchQuery]
+    [undo, redo, duplicateItems, groupItems, ungroupItems, bringToFront, sendToBack, addItem, reactFlow, getSelectedIds, setSearchQuery]
   );
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyboard);
     return () => document.removeEventListener('keydown', handleKeyboard);
   }, [handleKeyboard]);
+
+  // Persist viewport on pan/zoom end
+  const handleMoveEnd = useCallback(
+    (_event: MouseEvent | TouchEvent | null, vp: Viewport) => {
+      updateViewport({ x: vp.x, y: vp.y, zoom: vp.zoom });
+    },
+    [updateViewport]
+  );
 
   return (
     <div className="w-full h-full relative">
@@ -312,13 +318,14 @@ function CanvasInner() {
           onDoubleClick={handleDoubleClick}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
+          onMoveEnd={handleMoveEnd}
           deleteKeyCode={['Backspace', 'Delete']}
           multiSelectionKeyCode="Shift"
           selectionOnDrag
           panOnDrag={[1, 2]}
           selectionMode={SelectionMode.Partial}
           fitView={false}
-          defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+          defaultViewport={storedViewport}
           minZoom={0.1}
           maxZoom={4}
           proOptions={{ hideAttribution: true }}

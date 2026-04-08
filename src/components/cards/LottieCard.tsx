@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import { CardWrapper } from './CardWrapper';
 import { useBoardStore } from '../../store/boardStore';
@@ -13,22 +13,26 @@ interface LottieCardProps {
 
 export function LottieCard({ id, data, width, height }: LottieCardProps) {
   const updateItemData = useBoardStore((s) => s.updateItemData);
-  const [animationUrl, setAnimationUrl] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Create blob URL from inline animation data (avoids setState in effect)
+  const blobUrl = useMemo(() => {
     if (data.animationData) {
       const blob = new Blob([JSON.stringify(data.animationData)], {
         type: 'application/json',
       });
-      const url = URL.createObjectURL(blob);
-      setAnimationUrl(url);
-      return () => URL.revokeObjectURL(url);
+      return URL.createObjectURL(blob);
     }
-    if (data.url) {
-      setAnimationUrl(data.url);
-    }
-  }, [data.animationData, data.url]);
+    return null;
+  }, [data.animationData]);
 
+  // Clean up blob URL when it changes or on unmount
+  useEffect(() => {
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [blobUrl]);
+
+  const animationUrl = blobUrl ?? data.url ?? null;
   const title = data.fileName ?? 'Lottie Animation';
   const speed = data.speed ?? 1;
 
