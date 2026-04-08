@@ -57,7 +57,15 @@ export async function importBoard(file: File): Promise<string> {
   if (!manifestFile) throw new Error('Invalid .motionboard file: missing manifest');
 
   const manifestJson = await manifestFile.async('string');
-  const manifest: MotionBoardManifest = JSON.parse(manifestJson);
+  let manifest: MotionBoardManifest;
+  try {
+    manifest = JSON.parse(manifestJson);
+  } catch {
+    throw new Error('Invalid .motionboard file: corrupt manifest JSON');
+  }
+  if (!manifest.version || !manifest.items || !Array.isArray(manifest.items)) {
+    throw new Error('Invalid .motionboard file: missing required fields in manifest');
+  }
 
   // Create a new board
   const boardId = await createBoard(manifest.name);

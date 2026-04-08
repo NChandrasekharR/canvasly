@@ -12,8 +12,8 @@ export function TagEditor({ itemId, tags }: TagEditorProps) {
   const [showInput, setShowInput] = useState(false);
 
   const addTag = () => {
-    const tag = newTag.trim().toLowerCase();
-    if (tag && !tags.includes(tag)) {
+    const tag = newTag.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+    if (tag && tag.length <= 32 && !tags.includes(tag)) {
       updateItemTags(itemId, [...tags, tag]);
     }
     setNewTag('');

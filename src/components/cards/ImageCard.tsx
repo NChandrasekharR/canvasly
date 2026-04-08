@@ -7,10 +7,11 @@ interface ImageCardProps {
   data: ImageItemData;
   width: number;
   height: number;
+  blobUrl?: string;
 }
 
-export function ImageCard({ id, data, width, height }: ImageCardProps) {
-  const src = data.url ?? '';
+export function ImageCard({ id, data, width, height, blobUrl }: ImageCardProps) {
+  const src = blobUrl ?? data.url ?? '';
   const title = data.fileName ?? data.caption ?? 'Image';
   const [failed, setFailed] = useState(false);
 

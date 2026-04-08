@@ -31,33 +31,40 @@ type BoardNodeData = {
 function BoardNodeInner({ data, selected }: NodeProps) {
   const nodeData = data as unknown as BoardNodeData;
   const item = nodeData.boardItem;
-  console.log('[Canvasly] BoardNode render', { id: item.id, type: item.type, position: item.position, size: item.size });
   const updateItemSize = useBoardStore((s) => s.updateItemSize);
   const searchQuery = useBoardStore((s) => s.searchQuery);
   const tagFilter = useBoardStore((s) => s.tagFilter);
   const [blobUrl, setBlobUrl] = useState<string | undefined>();
 
+  // Load blob URLs for media items — with cancellation to prevent race conditions
   useEffect(() => {
-    let revoke: string | undefined;
+    let cancelled = false;
+    let objectUrl: string | undefined;
+
     const loadBlob = async () => {
       let blobId: string | undefined;
       if (item.type === 'video-upload') {
         blobId = (item.data as VideoUploadData).blobId;
       } else if (item.type === 'rive') {
         blobId = (item.data as RiveData).blobId;
+      } else if (item.type === 'image') {
+        blobId = (item.data as ImageItemData).blobId;
       }
       if (blobId) {
         const media = await getMedia(blobId);
+        if (cancelled) return;
         if (media) {
           const url = URL.createObjectURL(media.blob);
-          revoke = url;
+          objectUrl = url;
           setBlobUrl(url);
         }
       }
     };
     loadBlob();
+
     return () => {
-      if (revoke) URL.revokeObjectURL(revoke);
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [item.type, item.data]);
 
@@ -66,15 +73,19 @@ function BoardNodeInner({ data, selected }: NodeProps) {
     if (tagFilter && !item.tags.includes(tagFilter)) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      const searchable = [
+      const parts: string[] = [
         ...item.tags,
         item.type,
-        ...(item.data && 'fileName' in item.data ? [String(item.data.fileName)] : []),
-        ...(item.data && 'url' in item.data ? [String(item.data.url)] : []),
-        ...(item.data && 'title' in item.data ? [String(item.data.title)] : []),
-        ...(item.data && 'content' in item.data ? [String(item.data.content)] : []),
-        ...(item.data && 'label' in item.data ? [String(item.data.label)] : []),
-      ].join(' ').toLowerCase();
+      ];
+      // Only add string values that are defined and non-empty
+      const d = item.data;
+      if (d && 'fileName' in d && typeof d.fileName === 'string') parts.push(d.fileName);
+      if (d && 'url' in d && typeof d.url === 'string') parts.push(d.url);
+      if (d && 'title' in d && typeof d.title === 'string') parts.push(d.title);
+      if (d && 'content' in d && typeof d.content === 'string') parts.push(d.content);
+      if (d && 'label' in d && typeof d.label === 'string') parts.push(d.label);
+
+      const searchable = parts.join(' ').toLowerCase();
       if (!searchable.includes(q)) return false;
     }
     return true;
@@ -86,9 +97,9 @@ function BoardNodeInner({ data, selected }: NodeProps) {
         const imgData = item.data as ImageItemData;
         const isGif = imgData.fileName?.toLowerCase().endsWith('.gif');
         if (isGif) {
-          return <GifCard id={item.id} data={imgData} width={item.size.width} height={item.size.height} />;
+          return <GifCard id={item.id} data={imgData} width={item.size.width} height={item.size.height} blobUrl={blobUrl} />;
         }
-        return <ImageCard id={item.id} data={imgData} width={item.size.width} height={item.size.height} />;
+        return <ImageCard id={item.id} data={imgData} width={item.size.width} height={item.size.height} blobUrl={blobUrl} />;
       }
       case 'video-embed':
         return <VideoEmbedCard id={item.id} data={item.data as VideoEmbedData} width={item.size.width} height={item.size.height} />;

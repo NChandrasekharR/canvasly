@@ -17,6 +17,8 @@ const LANGUAGE_LABELS: Record<string, string> = {
   p5js: 'p5.js',
 };
 
+const CLOSE_SCRIPT = '</' + 'script>';
+
 function buildPreviewHtml(code: string, language: string): string {
   switch (language) {
     case 'html':
@@ -24,9 +26,9 @@ function buildPreviewHtml(code: string, language: string): string {
     case 'css':
       return `<!DOCTYPE html><html><head><style>${code}</style></head><body><div class="preview">Preview</div></body></html>`;
     case 'javascript':
-      return `<!DOCTYPE html><html><head></head><body><script>${code}<\/script></body></html>`;
+      return `<!DOCTYPE html><html><head></head><body><script>${code}${CLOSE_SCRIPT}</body></html>`;
     case 'p5js':
-      return `<!DOCTYPE html><html><head><script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"><\/script></head><body><script>${code}<\/script></body></html>`;
+      return `<!DOCTYPE html><html><head><script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js">${CLOSE_SCRIPT}</head><body><script>${code}${CLOSE_SCRIPT}</body></html>`;
     default:
       return code;
   }

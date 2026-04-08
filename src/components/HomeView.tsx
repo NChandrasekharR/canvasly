@@ -125,8 +125,12 @@ export function HomeView() {
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (file) {
-                await importBoard(file);
-                await loadBoards();
+                try {
+                  await importBoard(file);
+                  await loadBoards();
+                } catch (err) {
+                  console.error('[Canvasly] Import failed:', err);
+                }
               }
               e.target.value = '';
             }}
@@ -245,8 +249,12 @@ export function HomeView() {
                   >
                     <button
                       onClick={async () => {
-                        const blob = await exportBoard(board.id);
-                        downloadBlob(blob, `${board.name}.motionboard`);
+                        try {
+                          const blob = await exportBoard(board.id);
+                          downloadBlob(blob, `${board.name}.motionboard`);
+                        } catch (err) {
+                          console.error('[Canvasly] Export failed:', err);
+                        }
                       }}
                       className="w-7 h-7 rounded-md flex items-center justify-center cursor-pointer transition-colors"
                       style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
