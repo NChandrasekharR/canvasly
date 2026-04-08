@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -7,6 +7,7 @@ import {
   SelectionMode,
   useViewport,
   useReactFlow,
+  applyNodeChanges,
   type Node,
   type NodeChange,
   type OnNodesChange,
@@ -28,7 +29,7 @@ const nodeTypes = {
 };
 
 function CanvasInner() {
-  const { items, addItem, updateItemPosition, updateItemSize, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
+  const { items, addItem, updateItemPosition, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
     useBoardStore();
   const storedViewport = useBoardStore((s) => s._viewport);
   const viewport = useViewport();
@@ -44,37 +45,49 @@ function CanvasInner() {
     itemsRef.current = items;
   }, [items]);
 
-  const nodes: Node[] = useMemo(
-    () =>
-      items.map((item) => ({
-        id: item.id,
-        type: 'boardItem',
-        position: item.position,
-        data: { boardItem: item },
-        style: { width: item.size.width, height: item.size.height },
-        zIndex: item.zIndex,
-      })),
-    [items]
-  );
+  // React Flow nodes state — kept in sync with Zustand items but preserving
+  // RF internal properties (measured, selected, dragging) that RF needs to render.
+  const [rfNodes, setRfNodes] = useState<Node[]>([]);
 
+  useEffect(() => {
+    // Sync external Zustand items to RF nodes, preserving RF internal state
+    // (measured dims, selection, drag position). setState in effect is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRfNodes((prevNodes) => {
+      const prevMap = new Map(prevNodes.map((n) => [n.id, n]));
+      return items.map((item) => {
+        const prev = prevMap.get(item.id);
+        return {
+          ...(prev ?? {}), // preserve RF internal state (measured, selected, dragging, etc.)
+          id: item.id,
+          type: 'boardItem' as const,
+          // During drag, keep RF's live position; otherwise use store position
+          position: prev?.dragging ? (prev.position ?? item.position) : item.position,
+          data: { boardItem: item },
+          style: { width: item.size.width, height: item.size.height },
+          zIndex: item.zIndex,
+        };
+      });
+    });
+  }, [items]);
+
+  // Apply ALL node changes from React Flow (measured dims, selection, dragging, etc.)
+  // and sync user-initiated changes (drag end, remove) back to the Zustand store.
   const onNodesChange: OnNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      setRfNodes((nds) => applyNodeChanges(changes, nds));
+
       for (const change of changes) {
-        if (change.type === 'position' && change.position) {
+        // Sync position to store only on drag end (not during drag — big perf win)
+        if (change.type === 'position' && change.dragging === false && change.position) {
           updateItemPosition(change.id, change.position);
-        }
-        if (change.type === 'dimensions' && change.dimensions) {
-          updateItemSize(change.id, {
-            width: change.dimensions.width,
-            height: change.dimensions.height,
-          });
         }
         if (change.type === 'remove') {
           removeItem(change.id);
         }
       }
     },
-    [updateItemPosition, updateItemSize, removeItem]
+    [updateItemPosition, removeItem]
   );
 
   const handleDoubleClick = useCallback(
@@ -311,7 +324,7 @@ function CanvasInner() {
       <Sidebar />
       <div className="absolute inset-0" style={{ top: 48, bottom: 36 }}>
         <ReactFlow
-          nodes={nodes}
+          nodes={rfNodes}
           edges={[]}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
