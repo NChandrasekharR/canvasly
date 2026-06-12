@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useBoardStore } from '../store/boardStore';
-import { exportBoard, importBoard, downloadBlob } from '../utils/exportImport';
 
 /* ─── SVG Icons ─── */
 const IconPlus = () => (
@@ -126,6 +125,7 @@ export function HomeView() {
               const file = e.target.files?.[0];
               if (file) {
                 try {
+                  const { importBoard } = await import('../utils/exportImport');
                   await importBoard(file);
                   await loadBoards();
                 } catch (err) {
@@ -250,6 +250,7 @@ export function HomeView() {
                     <button
                       onClick={async () => {
                         try {
+                          const { exportBoard, downloadBlob } = await import('../utils/exportImport');
                           const blob = await exportBoard(board.id);
                           downloadBlob(blob, `${board.name}.motionboard`);
                         } catch (err) {

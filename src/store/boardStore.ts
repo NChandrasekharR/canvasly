@@ -25,6 +25,11 @@ let _saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let _saveInFlight = false;
 let _savePending = false;
 
+// Restore persisted theme before first render so the UI doesn't flash dark
+const initialTheme: 'dark' | 'light' =
+  localStorage.getItem('motionboard-theme') === 'light' ? 'light' : 'dark';
+document.documentElement.setAttribute('data-theme', initialTheme);
+
 interface BoardState {
   // Navigation
   view: View;
@@ -55,6 +60,7 @@ interface BoardState {
   removeItem: (id: string) => void;
   removeItems: (ids: string[]) => void;
   updateItemPosition: (id: string, position: { x: number; y: number }) => void;
+  updateItemPositions: (updates: { id: string; position: { x: number; y: number } }[]) => void;
   updateItemSize: (id: string, size: { width: number; height: number }) => void;
   updateItemData: (id: string, data: Partial<BoardItemData>) => void;
 
@@ -221,6 +227,20 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     get()._scheduleSave();
   },
 
+  // Batched position update — one undo entry per drag gesture, even multi-select
+  updateItemPositions: (updates) => {
+    if (updates.length === 0) return;
+    get()._pushUndoState();
+    const posMap = new Map(updates.map((u) => [u.id, u.position]));
+    set((state) => ({
+      items: state.items.map((item) => {
+        const position = posMap.get(item.id);
+        return position ? { ...item, position } : item;
+      }),
+    }));
+    get()._scheduleSave();
+  },
+
   updateItemSize: (id, size) => {
     set((state) => ({
       items: state.items.map((item) =>
@@ -378,7 +398,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   // Theme
-  theme: 'dark' as 'dark' | 'light',
+  theme: initialTheme,
   toggleTheme: () => {
     const newTheme = get().theme === 'dark' ? 'light' : 'dark';
     set({ theme: newTheme });

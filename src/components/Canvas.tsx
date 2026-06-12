@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   BackgroundVariant,
   MiniMap,
@@ -29,7 +30,7 @@ const nodeTypes = {
 };
 
 function CanvasInner() {
-  const { items, addItem, updateItemPosition, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
+  const { items, addItem, updateItemPositions, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
     useBoardStore();
   const storedViewport = useBoardStore((s) => s._viewport);
   const viewport = useViewport();
@@ -77,17 +78,20 @@ function CanvasInner() {
     (changes: NodeChange[]) => {
       setRfNodes((nds) => applyNodeChanges(changes, nds));
 
+      // Sync positions to store only on drag end, batched so a multi-select
+      // drag produces a single undo entry
+      const moved: { id: string; position: { x: number; y: number } }[] = [];
       for (const change of changes) {
-        // Sync position to store only on drag end (not during drag — big perf win)
         if (change.type === 'position' && change.dragging === false && change.position) {
-          updateItemPosition(change.id, change.position);
+          moved.push({ id: change.id, position: change.position });
         }
         if (change.type === 'remove') {
           removeItem(change.id);
         }
       }
+      if (moved.length > 0) updateItemPositions(moved);
     },
-    [updateItemPosition, removeItem]
+    [updateItemPositions, removeItem]
   );
 
   const handleDoubleClick = useCallback(
@@ -366,5 +370,9 @@ function CanvasInner() {
 }
 
 export function Canvas() {
-  return <CanvasInner />;
+  return (
+    <ReactFlowProvider>
+      <CanvasInner />
+    </ReactFlowProvider>
+  );
 }
