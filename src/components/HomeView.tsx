@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useBoardStore } from '../store/boardStore';
+import { showToast } from '../store/toastStore';
 
 /* ─── SVG Icons ─── */
 const IconPlus = () => (
@@ -128,8 +129,10 @@ export function HomeView() {
                   const { importBoard } = await import('../utils/exportImport');
                   await importBoard(file);
                   await loadBoards();
+                  showToast('Board imported', 'success');
                 } catch (err) {
                   console.error('[Canvasly] Import failed:', err);
+                  showToast(err instanceof Error ? err.message : 'Import failed', 'error');
                 }
               }
               e.target.value = '';
@@ -253,8 +256,10 @@ export function HomeView() {
                           const { exportBoard, downloadBlob } = await import('../utils/exportImport');
                           const blob = await exportBoard(board.id);
                           downloadBlob(blob, `${board.name}.motionboard`);
+                          showToast('Board exported', 'success');
                         } catch (err) {
                           console.error('[Canvasly] Export failed:', err);
+                          showToast('Export failed — see console for details', 'error');
                         }
                       }}
                       className="w-7 h-7 rounded-md flex items-center justify-center cursor-pointer transition-colors"

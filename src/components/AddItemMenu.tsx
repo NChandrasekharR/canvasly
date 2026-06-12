@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
-import { parseVideoUrl } from '../utils/video';
+import { parseVideoUrl, getVideoDuration } from '../utils/video';
 import { isImageFile, isGifFile, isVideoFile, getFileExtension, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../utils/files';
 import { saveMedia } from '../db/boardRepository';
+import { showToast } from '../store/toastStore';
 import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData, ColorData } from '../types';
 
 /* ─── SVG Icons ─── */
@@ -54,11 +55,11 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
     for (const file of Array.from(files)) {
       // File size validation
       if (file.size > MAX_FILE_SIZE) {
-        console.warn(`[Canvasly] File "${file.name}" exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit, skipping`);
+        showToast(`"${file.name}" exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`, 'error');
         continue;
       }
       if (file.size > WARN_FILE_SIZE) {
-        console.warn(`[Canvasly] File "${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB)`);
+        showToast(`"${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB) — may slow saving`, 'warning');
       }
 
       const ext = getFileExtension(file.name);
@@ -70,7 +71,7 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
           const data: LottieData = { animationData, speed: 1, fileName: file.name };
           addItem('lottie', data, canvasPosition);
         } catch {
-          console.warn('[Canvasly] Failed to parse JSON file as Lottie animation');
+          showToast(`"${file.name}" is not a valid Lottie JSON file`, 'error');
         }
       } else if (ext === 'riv') {
         if (!activeBoardId) continue;
@@ -79,9 +80,10 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
         addItem('rive', data, canvasPosition);
       } else if (isVideoFile(file)) {
         if (!activeBoardId) continue;
+        const duration = await getVideoDuration(file);
         const blobId = await saveMedia(activeBoardId, file, file.name, file.type);
         const data: VideoUploadData = {
-          blobId, fileName: file.name, mimeType: file.type, fileSize: file.size,
+          blobId, fileName: file.name, mimeType: file.type, fileSize: file.size, duration,
         };
         addItem('video-upload', data, canvasPosition);
       } else if (isGifFile(file) || isImageFile(file)) {
@@ -90,7 +92,7 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
         const data: ImageItemData = { blobId, fileName: file.name };
         addItem('image', data, canvasPosition);
       } else {
-        console.warn('[Canvasly] Unsupported file type:', file.name);
+        showToast(`Unsupported file type: "${file.name}"`, 'warning');
       }
     }
     onClose();
@@ -109,6 +111,8 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
         thumbnailUrl: parsed.thumbnailUrl,
       };
       addItem('video-embed', data, canvasPosition);
+    } else {
+      showToast('URL not recognized — only YouTube and Vimeo links are supported', 'warning');
     }
     onClose();
   };

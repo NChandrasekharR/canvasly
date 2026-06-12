@@ -163,6 +163,26 @@ export async function deleteMedia(id: string): Promise<void> {
   await db.media.delete(id);
 }
 
+/**
+ * Delete media blobs for a board that no item references anymore.
+ * Safe to run at board-open time, when the undo stack is empty —
+ * during a session, deleted items may still be restored via undo,
+ * so their blobs must not be collected until the next open.
+ */
+export async function cleanupOrphanedMedia(boardId: string, items: BoardItem[]): Promise<number> {
+  const referenced = new Set<string>();
+  for (const item of items) {
+    const data = item.data as Record<string, unknown>;
+    if (typeof data.blobId === 'string') referenced.add(data.blobId);
+  }
+  const media = await db.media.where('boardId').equals(boardId).toArray();
+  const orphans = media.filter((m) => !referenced.has(m.id)).map((m) => m.id);
+  if (orphans.length > 0) {
+    await db.media.bulkDelete(orphans);
+  }
+  return orphans.length;
+}
+
 export async function getStorageUsage(): Promise<number> {
   const boards = await db.boards.toArray();
   const media = await db.media.toArray();

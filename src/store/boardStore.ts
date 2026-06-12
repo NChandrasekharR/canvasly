@@ -10,6 +10,7 @@ import {
   deleteBoard as deleteBoardDB,
   duplicateBoard as duplicateBoardDB,
   getStorageUsage,
+  cleanupOrphanedMedia,
   type BoardMeta,
 } from '../db/boardRepository';
 
@@ -173,6 +174,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       _undoStack: [],
       _redoStack: [],
     });
+    // Undo stack is empty here, so unreferenced blobs can't be restored — safe to collect
+    cleanupOrphanedMedia(board.id, board.items)
+      .then((n) => {
+        if (n > 0) get().refreshStorageUsage();
+      })
+      .catch(() => {});
   },
 
   // Items

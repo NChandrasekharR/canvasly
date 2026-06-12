@@ -20,9 +20,11 @@ import { AddItemMenu } from './AddItemMenu';
 import { TopBar } from './TopBar';
 import { BottomBar } from './BottomBar';
 import { Sidebar } from './Sidebar';
+import { GroupOverlay } from './GroupOverlay';
 import { isImageFile, isGifFile, isVideoFile, getFileExtension, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../utils/files';
-import { parseVideoUrl } from '../utils/video';
+import { parseVideoUrl, getVideoDuration } from '../utils/video';
 import { saveMedia } from '../db/boardRepository';
+import { showToast } from '../store/toastStore';
 import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData } from '../types';
 
 const nodeTypes = {
@@ -123,11 +125,11 @@ function CanvasInner() {
     async (file: File, flowPos: { x: number; y: number }) => {
       // File size validation
       if (file.size > MAX_FILE_SIZE) {
-        console.warn(`[Canvasly] File "${file.name}" exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit, skipping`);
+        showToast(`"${file.name}" exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`, 'error');
         return;
       }
       if (file.size > WARN_FILE_SIZE) {
-        console.warn(`[Canvasly] File "${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB)`);
+        showToast(`"${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB) — may slow saving`, 'warning');
       }
 
       const ext = getFileExtension(file.name);
@@ -144,7 +146,7 @@ function CanvasInner() {
           };
           addItem('lottie', data, flowPos);
         } catch {
-          console.warn('[Canvasly] Failed to parse JSON file as Lottie animation');
+          showToast(`"${file.name}" is not a valid Lottie JSON file`, 'error');
         }
       } else if (ext === 'riv') {
         if (!activeBoardId) return;
@@ -158,12 +160,14 @@ function CanvasInner() {
         addItem('rive', data, flowPos);
       } else if (isVideoFile(file)) {
         if (!activeBoardId) return;
+        const duration = await getVideoDuration(file);
         const blobId = await saveMedia(activeBoardId, file, file.name, file.type);
         const data: VideoUploadData = {
           blobId,
           fileName: file.name,
           mimeType: file.type,
           fileSize: file.size,
+          duration,
         };
         addItem('video-upload', data, flowPos);
       } else if (isGifFile(file) || isImageFile(file)) {
@@ -175,7 +179,7 @@ function CanvasInner() {
         };
         addItem('image', data, flowPos);
       } else {
-        console.warn('[Canvasly] Unsupported file type:', file.name);
+        showToast(`Unsupported file type: "${file.name}"`, 'warning');
       }
     },
     [addItem, activeBoardId]
@@ -348,6 +352,7 @@ function CanvasInner() {
           proOptions={{ hideAttribution: true }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--border)" />
+          <GroupOverlay />
           <MiniMap
             nodeColor="var(--bg-tertiary)"
             maskColor="rgba(0,0,0,0.5)"
