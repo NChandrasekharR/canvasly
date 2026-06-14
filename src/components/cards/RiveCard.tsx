@@ -1,3 +1,4 @@
+import { useCallback, useEffect } from 'react';
 import { useRive } from '@rive-app/react-canvas';
 import { CardWrapper } from './CardWrapper';
 import { useBoardStore } from '../../store/boardStore';
@@ -21,12 +22,26 @@ export function RiveCard({ id, data, width, height, blobUrl }: RiveCardProps) {
     updateItemData(id, { speed: newSpeed } as Partial<RiveData>);
   };
 
+  // Persist state machine names detected by the Rive runtime
+  const handleStateMachines = useCallback(
+    (names: string[]) => {
+      const existing = data.stateMachineNames ?? [];
+      if (existing.length === names.length && existing.every((n, i) => n === names[i])) return;
+      updateItemData(id, { stateMachineNames: names } as Partial<RiveData>);
+    },
+    [id, data.stateMachineNames, updateItemData]
+  );
+
   return (
     <CardWrapper id={id} title={title} typeIcon="~" width={width} height={height}>
       <div className="w-full h-full flex flex-col">
         <div className="flex-1 overflow-hidden">
           {blobUrl ? (
-            <RiveCanvas src={blobUrl} stateMachine={data.activeStateMachine} />
+            <RiveCanvas
+              src={blobUrl}
+              stateMachine={data.activeStateMachine}
+              onStateMachines={handleStateMachines}
+            />
           ) : (
             <div
               className="w-full h-full flex items-center justify-center text-sm"
@@ -90,15 +105,23 @@ export function RiveCard({ id, data, width, height, blobUrl }: RiveCardProps) {
 function RiveCanvas({
   src,
   stateMachine,
+  onStateMachines,
 }: {
   src: string;
   stateMachine?: string;
+  onStateMachines?: (names: string[]) => void;
 }) {
-  const { RiveComponent } = useRive({
+  const { rive, RiveComponent } = useRive({
     src,
     stateMachines: stateMachine ? [stateMachine] : undefined,
     autoplay: true,
   });
+
+  useEffect(() => {
+    if (!rive || !onStateMachines) return;
+    const names = rive.stateMachineNames;
+    if (names && names.length > 0) onStateMachines(names);
+  }, [rive, onStateMachines]);
 
   return <RiveComponent style={{ width: '100%', height: '100%' }} />;
 }

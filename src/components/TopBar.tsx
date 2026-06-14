@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
 import { exportBoard, downloadBlob } from '../utils/exportImport';
+import { showToast } from '../store/toastStore';
 
 /* ─── SVG Icons ─── */
 const IconHome = () => (
@@ -237,8 +238,10 @@ export function TopBar() {
             try {
               const blob = await exportBoard(activeBoardId);
               downloadBlob(blob, `${activeBoardName}.motionboard`);
+              showToast('Board exported', 'success');
             } catch (err) {
               console.error('[Canvasly] Export failed:', err);
+              showToast('Export failed — see console for details', 'error');
             }
           }}
           data-tooltip="Export board"

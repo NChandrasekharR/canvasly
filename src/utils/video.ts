@@ -36,3 +36,21 @@ export function parseVideoUrl(url: string): ParsedVideo | null {
 export function isVideoUrl(url: string): boolean {
   return parseVideoUrl(url) !== null;
 }
+
+/** Extract duration (seconds) from a video file via an offscreen element. */
+export function getVideoDuration(file: File): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(video.duration) ? video.duration : undefined);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(undefined);
+    };
+    video.src = url;
+  });
+}
