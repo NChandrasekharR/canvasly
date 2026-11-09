@@ -28,45 +28,44 @@ type BoardNodeData = {
   [key: string]: unknown;
 };
 
+function mediaBlobId(item: BoardItem): string | undefined {
+  if (item.type !== 'video-upload' && item.type !== 'rive' && item.type !== 'image' && item.type !== 'lottie') {
+    return undefined;
+  }
+  const blobId = (item.data as { blobId?: unknown }).blobId;
+  return typeof blobId === 'string' ? blobId : undefined;
+}
+
 function BoardNodeInner({ data, selected }: NodeProps) {
   const nodeData = data as unknown as BoardNodeData;
   const item = nodeData.boardItem;
   const updateItemSize = useBoardStore((s) => s.updateItemSize);
   const searchQuery = useBoardStore((s) => s.searchQuery);
   const tagFilter = useBoardStore((s) => s.tagFilter);
-  const [blobUrl, setBlobUrl] = useState<string | undefined>();
+  const blobId = mediaBlobId(item);
+  const [loadedBlob, setLoadedBlob] = useState<{ id: string; url: string } | null>(null);
+  const blobUrl = loadedBlob && loadedBlob.id === blobId ? loadedBlob.url : undefined;
 
-  // Load blob URLs for media items — with cancellation to prevent race conditions
+  // Load blob URLs for media items — with cancellation to prevent race conditions.
+  // Keyed by blob id only, so edits like playback speed don't revoke the URL mid-play.
   useEffect(() => {
+    if (!blobId) return;
     let cancelled = false;
     let objectUrl: string | undefined;
 
     const loadBlob = async () => {
-      let blobId: string | undefined;
-      if (item.type === 'video-upload') {
-        blobId = (item.data as VideoUploadData).blobId;
-      } else if (item.type === 'rive') {
-        blobId = (item.data as RiveData).blobId;
-      } else if (item.type === 'image') {
-        blobId = (item.data as ImageItemData).blobId;
-      }
-      if (blobId) {
-        const media = await getMedia(blobId);
-        if (cancelled) return;
-        if (media) {
-          const url = URL.createObjectURL(media.blob);
-          objectUrl = url;
-          setBlobUrl(url);
-        }
-      }
+      const media = await getMedia(blobId);
+      if (cancelled || !media) return;
+      objectUrl = URL.createObjectURL(media.blob);
+      setLoadedBlob({ id: blobId, url: objectUrl });
     };
-    loadBlob();
+    void loadBlob();
 
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [item.type, item.data]);
+  }, [blobId]);
 
   // Filter: dim items that don't match tag filter or search
   const matchesFilter = (() => {
@@ -84,6 +83,9 @@ function BoardNodeInner({ data, selected }: NodeProps) {
       if (d && 'title' in d && typeof d.title === 'string') parts.push(d.title);
       if (d && 'content' in d && typeof d.content === 'string') parts.push(d.content);
       if (d && 'label' in d && typeof d.label === 'string') parts.push(d.label);
+      if (d && 'caption' in d && typeof d.caption === 'string') parts.push(d.caption);
+      if (d && 'code' in d && typeof d.code === 'string') parts.push(d.code);
+      if (d && 'hex' in d && typeof d.hex === 'string') parts.push(d.hex);
 
       const searchable = parts.join(' ').toLowerCase();
       if (!searchable.includes(q)) return false;
@@ -106,7 +108,7 @@ function BoardNodeInner({ data, selected }: NodeProps) {
       case 'video-upload':
         return <VideoUploadCard id={item.id} data={item.data as VideoUploadData} width={item.size.width} height={item.size.height} blobUrl={blobUrl} />;
       case 'lottie':
-        return <LottieCard id={item.id} data={item.data as LottieData} width={item.size.width} height={item.size.height} />;
+        return <LottieCard id={item.id} data={item.data as LottieData} width={item.size.width} height={item.size.height} blobUrl={blobUrl} />;
       case 'rive':
         return <RiveCard id={item.id} data={item.data as RiveData} width={item.size.width} height={item.size.height} blobUrl={blobUrl} />;
       case 'text':
@@ -139,6 +141,9 @@ function BoardNodeInner({ data, selected }: NodeProps) {
         minHeight={100}
         lineStyle={{ borderColor: 'var(--accent)', borderWidth: 1 }}
         handleStyle={{ width: 8, height: 8, backgroundColor: 'var(--accent)', borderRadius: 2, border: 'none' }}
+        onResizeStart={() => {
+          useBoardStore.getState()._pushUndoState();
+        }}
         onResize={(_event, params) => {
           updateItemSize(item.id, { width: params.width, height: params.height });
         }}

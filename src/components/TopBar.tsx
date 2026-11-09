@@ -236,11 +236,12 @@ export function TopBar() {
           onClick={async () => {
             if (!activeBoardId) return;
             try {
+              await useBoardStore.getState().flushActiveBoard();
               const blob = await exportBoard(activeBoardId);
               downloadBlob(blob, `${activeBoardName}.motionboard`);
               showToast('Board exported', 'success');
             } catch (err) {
-              console.error('[Canvasly] Export failed:', err);
+              console.error('[MotionBoard] Export failed:', err);
               showToast('Export failed — see console for details', 'error');
             }
           }}

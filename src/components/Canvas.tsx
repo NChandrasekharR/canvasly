@@ -21,20 +21,29 @@ import { TopBar } from './TopBar';
 import { BottomBar } from './BottomBar';
 import { Sidebar } from './Sidebar';
 import { GroupOverlay } from './GroupOverlay';
-import { isImageFile, isGifFile, isVideoFile, getFileExtension, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../utils/files';
-import { parseVideoUrl, getVideoDuration } from '../utils/video';
-import { saveMedia } from '../db/boardRepository';
+import { IngestError, prepareItemFromFile, stackPosition } from '../utils/ingestFile';
+import { looksLikeLottiePage, parseLottieUrl } from '../utils/lottie';
+import { parseVideoUrl } from '../utils/video';
+import { loadVideoMetadata } from '../utils/videoMetadata';
 import { showToast } from '../store/toastStore';
-import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData } from '../types';
+import type { LottieData, TextData, CodeData, VideoEmbedData } from '../types';
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
 
 const nodeTypes = {
   boardItem: BoardNode,
 };
 
 function CanvasInner() {
-  const { items, addItem, updateItemPositions, removeItem, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
+  const { items, addItem, updateItemPosition, updateItemPositions, removeItems, activeBoardId, undo, redo, duplicateItems, bringToFront, sendToBack, groupItems, ungroupItems, setSearchQuery, updateViewport } =
     useBoardStore();
+  const theme = useBoardStore((s) => s.theme);
   const storedViewport = useBoardStore((s) => s._viewport);
+  const groupDragIds = useRef<Set<string>>(new Set());
   const viewport = useViewport();
   const reactFlow = useReactFlow();
   const [menuState, setMenuState] = useState<{
@@ -54,19 +63,21 @@ function CanvasInner() {
 
   useEffect(() => {
     // Sync external Zustand items to RF nodes, preserving RF internal state
-    // (measured dims, selection, drag position). setState in effect is intentional.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // (measured dims, selection, drag position).
     setRfNodes((prevNodes) => {
       const prevMap = new Map(prevNodes.map((n) => [n.id, n]));
       return items.map((item) => {
         const prev = prevMap.get(item.id);
+        const keepLivePosition = Boolean(prev?.dragging) || groupDragIds.current.has(item.id);
         return {
           ...(prev ?? {}), // preserve RF internal state (measured, selected, dragging, etc.)
           id: item.id,
           type: 'boardItem' as const,
           // During drag, keep RF's live position; otherwise use store position
-          position: prev?.dragging ? (prev.position ?? item.position) : item.position,
+          position: keepLivePosition ? (prev?.position ?? item.position) : item.position,
           data: { boardItem: item },
+          width: item.size.width,
+          height: item.size.height,
           style: { width: item.size.width, height: item.size.height },
           zIndex: item.zIndex,
         };
@@ -78,26 +89,106 @@ function CanvasInner() {
   // and sync user-initiated changes (drag end, remove) back to the Zustand store.
   const onNodesChange: OnNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      setRfNodes((nds) => applyNodeChanges(changes, nds));
+      const dragEnded = changes.some((change) => change.type === 'position' && change.dragging === false);
+      if (dragEnded) groupDragIds.current.clear();
 
-      // Sync positions to store only on drag end, batched so a multi-select
-      // drag produces a single undo entry
+      setRfNodes((nds) => {
+        const before = new Map(nds.map((node) => [node.id, node.position]));
+        let next = applyNodeChanges(changes, nds);
+
+        // While a grouped card is dragged, slide the rest of the group with it.
+        const movedIds = new Set<string>();
+        const groupDelta = new Map<string, { dx: number; dy: number }>();
+        for (const change of changes) {
+          if (change.type !== 'position' || !change.position || change.dragging !== true) continue;
+          const prev = before.get(change.id);
+          if (!prev) continue;
+          movedIds.add(change.id);
+          const item = itemsRef.current.find((candidate) => candidate.id === change.id);
+          if (!item?.groupId || groupDelta.has(item.groupId)) continue;
+          groupDelta.set(item.groupId, {
+            dx: change.position.x - prev.x,
+            dy: change.position.y - prev.y,
+          });
+        }
+        if (groupDelta.size === 0) return next;
+
+        const groupOf = new Map(
+          itemsRef.current.flatMap((item) => (item.groupId ? [[item.id, item.groupId] as const] : []))
+        );
+        next = next.map((node) => {
+          if (movedIds.has(node.id)) return node;
+          const groupId = groupOf.get(node.id);
+          const delta = groupId ? groupDelta.get(groupId) : undefined;
+          if (!delta) return node;
+          groupDragIds.current.add(node.id);
+          return {
+            ...node,
+            position: { x: node.position.x + delta.dx, y: node.position.y + delta.dy },
+          };
+        });
+        return next;
+      });
+
       const moved: { id: string; position: { x: number; y: number } }[] = [];
+      const removed: string[] = [];
+      const directlyMoved = new Set<string>();
+      const seenGroups = new Set<string>();
       for (const change of changes) {
         if (change.type === 'position' && change.dragging === false && change.position) {
-          moved.push({ id: change.id, position: change.position });
+          directlyMoved.add(change.id);
         }
-        if (change.type === 'remove') {
-          removeItem(change.id);
+        if (change.type === 'remove') removed.push(change.id);
+      }
+      for (const change of changes) {
+        if (change.type !== 'position' || change.dragging !== false || !change.position) continue;
+        moved.push({ id: change.id, position: change.position });
+        const item = itemsRef.current.find((candidate) => candidate.id === change.id);
+        if (!item?.groupId || seenGroups.has(item.groupId)) continue;
+        seenGroups.add(item.groupId);
+        const dx = change.position.x - item.position.x;
+        const dy = change.position.y - item.position.y;
+        if (dx === 0 && dy === 0) continue;
+        for (const sibling of itemsRef.current) {
+          if (sibling.groupId !== item.groupId || directlyMoved.has(sibling.id)) continue;
+          moved.push({
+            id: sibling.id,
+            position: { x: sibling.position.x + dx, y: sibling.position.y + dy },
+          });
         }
       }
+
+      // Resizing from the left or top reports a position change with no dragging
+      // flag. Persist it here so the card doesn't snap back when the size updates.
+      const resizedIds = new Set(
+        changes.flatMap((change) => (change.type === 'dimensions' ? [change.id] : []))
+      );
+      for (const change of changes) {
+        if (
+          change.type === 'position' &&
+          change.position &&
+          change.dragging == null &&
+          resizedIds.has(change.id)
+        ) {
+          updateItemPosition(change.id, change.position);
+        }
+      }
+
       if (moved.length > 0) updateItemPositions(moved);
+      if (removed.length > 0) removeItems(removed);
     },
-    [updateItemPositions, removeItem]
+    [updateItemPosition, updateItemPositions, removeItems]
   );
 
   const handleDoubleClick = useCallback(
     (event: React.MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      // onDoubleClick is attached to the React Flow wrapper, so it also sees
+      // double-clicks on cards. Those belong to the card (edit a note, etc.).
+      if (target.closest('.react-flow__node, .react-flow__minimap, .react-flow__panel, button, a, input, textarea, select')) {
+        return;
+      }
       const flowPos = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       setMenuState({
         screen: { x: event.clientX, y: event.clientY },
@@ -123,63 +214,14 @@ function CanvasInner() {
 
   const handleFileDrop = useCallback(
     async (file: File, flowPos: { x: number; y: number }) => {
-      // File size validation
-      if (file.size > MAX_FILE_SIZE) {
-        showToast(`"${file.name}" exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`, 'error');
-        return;
-      }
-      if (file.size > WARN_FILE_SIZE) {
-        showToast(`"${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB) — may slow saving`, 'warning');
-      }
-
-      const ext = getFileExtension(file.name);
-
-      if (ext === 'json') {
-        // Lottie JSON
-        try {
-          const text = await file.text();
-          const animationData = JSON.parse(text);
-          const data: LottieData = {
-            animationData,
-            speed: 1,
-            fileName: file.name,
-          };
-          addItem('lottie', data, flowPos);
-        } catch {
-          showToast(`"${file.name}" is not a valid Lottie JSON file`, 'error');
-        }
-      } else if (ext === 'riv') {
-        if (!activeBoardId) return;
-        const blobId = await saveMedia(activeBoardId, file, file.name, 'application/octet-stream');
-        const data: RiveData = {
-          blobId,
-          fileName: file.name,
-          fileSize: file.size,
-          speed: 1,
-        };
-        addItem('rive', data, flowPos);
-      } else if (isVideoFile(file)) {
-        if (!activeBoardId) return;
-        const duration = await getVideoDuration(file);
-        const blobId = await saveMedia(activeBoardId, file, file.name, file.type);
-        const data: VideoUploadData = {
-          blobId,
-          fileName: file.name,
-          mimeType: file.type,
-          fileSize: file.size,
-          duration,
-        };
-        addItem('video-upload', data, flowPos);
-      } else if (isGifFile(file) || isImageFile(file)) {
-        if (!activeBoardId) return;
-        const blobId = await saveMedia(activeBoardId, file, file.name, file.type || 'image/png');
-        const data: ImageItemData = {
-          blobId,
-          fileName: file.name,
-        };
-        addItem('image', data, flowPos);
-      } else {
-        showToast(`Unsupported file type: "${file.name}"`, 'warning');
+      if (!activeBoardId) return;
+      try {
+        const prepared = await prepareItemFromFile(file, activeBoardId);
+        if (prepared.warning) showToast(prepared.warning, 'warning');
+        addItem(prepared.type, prepared.data, flowPos);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not add file';
+        showToast(message, err instanceof IngestError ? err.level : 'error');
       }
     },
     [addItem, activeBoardId]
@@ -189,9 +231,9 @@ function CanvasInner() {
     async (event: React.DragEvent) => {
       event.preventDefault();
       const flowPos = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      const files = event.dataTransfer.files;
-      for (const file of Array.from(files)) {
-        await handleFileDrop(file, flowPos);
+      const files = Array.from(event.dataTransfer.files);
+      for (const [index, file] of files.entries()) {
+        await handleFileDrop(file, stackPosition(flowPos, index));
       }
     },
     [reactFlow, handleFileDrop]
@@ -204,6 +246,8 @@ function CanvasInner() {
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+
       const flowPos = reactFlow.screenToFlowPosition({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
@@ -214,13 +258,9 @@ function CanvasInner() {
         for (const item of Array.from(clipboardItems)) {
           if (item.type.startsWith('image/')) {
             const file = item.getAsFile();
-            if (file && activeBoardId) {
-              const blobId = await saveMedia(activeBoardId, file, 'Pasted Image', file.type);
-              const data: ImageItemData = {
-                blobId,
-                fileName: 'Pasted Image',
-              };
-              addItem('image', data, flowPos);
+            if (file) {
+              event.preventDefault();
+              await handleFileDrop(file, flowPos);
               return;
             }
           }
@@ -228,20 +268,34 @@ function CanvasInner() {
       }
 
       const text = event.clipboardData?.getData('text/plain')?.trim();
-      if (text) {
-        const parsed = parseVideoUrl(text);
-        if (parsed) {
-          const data: VideoEmbedData = {
-            url: text,
-            embedUrl: parsed.embedUrl,
-            platform: parsed.platform,
-            thumbnailUrl: parsed.thumbnailUrl,
-          };
-          addItem('video-embed', data, flowPos);
-        }
+      if (!text) return;
+
+      const lottieUrl = parseLottieUrl(text);
+      if (lottieUrl) {
+        event.preventDefault();
+        const data: LottieData = { url: lottieUrl, speed: 1 };
+        addItem('lottie', data, flowPos);
+        return;
+      }
+      if (looksLikeLottiePage(text)) {
+        showToast('Paste a direct .json or .lottie file URL to add a Lottie animation', 'warning');
+        return;
+      }
+
+      const parsed = parseVideoUrl(text);
+      if (parsed && (parsed.platform === 'youtube' || parsed.platform === 'vimeo')) {
+        event.preventDefault();
+        const data: VideoEmbedData = {
+          url: text,
+          embedUrl: parsed.embedUrl,
+          platform: parsed.platform,
+          thumbnailUrl: parsed.thumbnailUrl,
+        };
+        const id = addItem('video-embed', data, flowPos);
+        loadVideoMetadata(id, text, parsed.platform);
       }
     },
-    [reactFlow, addItem, activeBoardId]
+    [reactFlow, addItem, handleFileDrop]
   );
 
   useEffect(() => {
@@ -257,34 +311,37 @@ function CanvasInner() {
   // Keyboard shortcuts — uses refs/API to avoid recreating on every item change
   const handleKeyboard = useCallback(
     (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+      const editable = isEditableTarget(e.target);
       const meta = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
 
-      if (meta && e.key === 'z' && !e.shiftKey) {
+      if (meta && key === 'f') {
         e.preventDefault();
-        undo();
-      } else if (meta && e.key === 'z' && e.shiftKey) {
-        e.preventDefault();
-        redo();
-      } else if (meta && e.key === 'f') {
-        e.preventDefault();
-        const searchInput = document.querySelector<HTMLInputElement>('input[placeholder="Search..."]');
-        searchInput?.focus();
+        document.querySelector<HTMLInputElement>('input[placeholder="Search..."]')?.focus();
+        return;
       }
 
-      // Shortcuts that shouldn't fire when typing in inputs
-      if (isInput) return;
+      // Leave undo, paste, and typing shortcuts to the focused field.
+      if (editable) return;
 
-      if (meta && e.key === 'd') {
+      if (meta && key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((meta && key === 'z' && e.shiftKey) || (meta && key === 'y' && !e.shiftKey)) {
+        e.preventDefault();
+        redo();
+      } else if (meta && key === 'a') {
+        e.preventDefault();
+        setRfNodes((nds) => nds.map((node) => ({ ...node, selected: true })));
+      } else if (meta && key === 'd') {
         e.preventDefault();
         const ids = getSelectedIds();
         if (ids.length > 0) duplicateItems(ids);
-      } else if (meta && e.key === 'g' && !e.shiftKey) {
+      } else if (meta && key === 'g' && !e.shiftKey) {
         e.preventDefault();
         const ids = getSelectedIds();
         if (ids.length > 1) groupItems(ids);
-      } else if (meta && e.key === 'g' && e.shiftKey) {
+      } else if (meta && key === 'g' && e.shiftKey) {
         e.preventDefault();
         const ids = getSelectedIds();
         if (ids.length > 0) {
@@ -292,22 +349,32 @@ function CanvasInner() {
           const item = currentItems.find((i) => ids.includes(i.id) && i.groupId);
           if (item?.groupId) ungroupItems(item.groupId);
         }
+      } else if (meta && key === 'n') {
+        e.preventDefault();
+        void (async () => {
+          const id = await useBoardStore.getState().createNewBoard();
+          await useBoardStore.getState().openBoard(id);
+        })();
       } else if (e.key === ']') {
         const ids = getSelectedIds();
         ids.forEach((id) => bringToFront(id));
       } else if (e.key === '[') {
         const ids = getSelectedIds();
         ids.forEach((id) => sendToBack(id));
-      } else if (e.key === 't' || e.key === 'T') {
+      } else if (key === 't' && !meta) {
         const flowPos = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
         const data: TextData = { content: '' };
         addItem('text', data, flowPos);
-      } else if (e.key === 'c' && !meta) {
+      } else if (key === 'c' && !meta) {
         const flowPos = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
         const data: CodeData = { language: 'html', code: '', showPreview: true };
         addItem('code', data, flowPos);
       } else if (e.key === 'Escape') {
-        setSearchQuery('');
+        if (useBoardStore.getState().searchQuery) {
+          setSearchQuery('');
+          return;
+        }
+        setRfNodes((nds) => nds.map((node) => (node.selected ? { ...node, selected: false } : node)));
       }
     },
     [undo, redo, duplicateItems, groupItems, ungroupItems, bringToFront, sendToBack, addItem, reactFlow, getSelectedIds, setSearchQuery]
@@ -345,6 +412,8 @@ function CanvasInner() {
           selectionOnDrag
           panOnDrag={[1, 2]}
           selectionMode={SelectionMode.Partial}
+          zoomOnDoubleClick={false}
+          colorMode={theme}
           fitView={false}
           defaultViewport={storedViewport}
           minZoom={0.1}
@@ -354,8 +423,8 @@ function CanvasInner() {
           <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--border)" />
           <GroupOverlay />
           <MiniMap
-            nodeColor="var(--bg-tertiary)"
-            maskColor="rgba(0,0,0,0.5)"
+            nodeColor={theme === 'light' ? '#A1A1AA' : '#3F3F46'}
+            maskColor={theme === 'light' ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)'}
             position="bottom-right"
             style={{ marginBottom: 8, marginRight: 8 }}
           />

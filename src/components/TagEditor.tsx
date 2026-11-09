@@ -25,7 +25,7 @@ export function TagEditor({ itemId, tags }: TagEditorProps) {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="nodrag nopan nowheel flex flex-wrap items-center gap-1">
       {tags.map((tag) => (
         <span
           key={tag}
@@ -56,10 +56,11 @@ export function TagEditor({ itemId, tags }: TagEditorProps) {
           onChange={(e) => setNewTag(e.target.value)}
           onBlur={addTag}
           onKeyDown={(e) => {
+            e.stopPropagation();
             if (e.key === 'Enter') addTag();
             if (e.key === 'Escape') { setShowInput(false); setNewTag(''); }
           }}
-          className="px-2 py-0.5 rounded-full text-[10px] outline-none w-16"
+          className="nodrag nopan nowheel px-2 py-0.5 rounded-full text-[10px] outline-none w-16"
           style={{
             backgroundColor: 'var(--bg-tertiary)',
             color: 'var(--text-primary)',

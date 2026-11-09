@@ -69,7 +69,7 @@ export function CardWrapper({ id, title, typeIcon, children, width, height }: Ca
           </span>
         )}
         {hovered && (
-          <div className="flex items-center gap-0.5 ml-auto animate-fade-in">
+          <div className="nodrag nopan flex items-center gap-0.5 ml-auto animate-fade-in">
             <button
               className="w-5 h-5 rounded flex items-center justify-center transition-colors cursor-pointer"
               onClick={(e) => { e.stopPropagation(); bringToFront(id); }}

@@ -37,6 +37,11 @@ function buildPreviewHtml(code: string, language: string): string {
 export function CodeCard({ id, data, width, height }: CodeCardProps) {
   const updateItemData = useBoardStore((s) => s.updateItemData);
   const [code, setCode] = useState(data.code);
+  const [storedCode, setStoredCode] = useState(data.code);
+  if (data.code !== storedCode) {
+    setStoredCode(data.code);
+    setCode(data.code);
+  }
   const [previewKey, setPreviewKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -56,15 +61,16 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
       <div className="w-full h-full flex flex-col">
         {/* Toolbar */}
         <div
-          className="flex items-center gap-2 px-2 py-1 shrink-0"
+          className="nodrag nopan nowheel flex items-center gap-2 px-2 py-1 shrink-0"
           style={{ borderBottom: '1px solid var(--border)' }}
         >
-          <select
+            <select
             value={data.language}
+            onKeyDown={(e) => e.stopPropagation()}
             onChange={(e) =>
               updateItemData(id, { language: e.target.value } as Partial<CodeData>)
             }
-            className="text-xs rounded px-1 py-0.5 outline-none cursor-pointer"
+            className="nodrag nopan nowheel text-xs rounded px-1 py-0.5 outline-none cursor-pointer"
             style={{
               backgroundColor: 'var(--bg-tertiary)',
               color: 'var(--text-secondary)',
@@ -78,7 +84,7 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
             ))}
           </select>
           <button
-            className="text-xs px-2 py-0.5 rounded cursor-pointer"
+            className="nodrag nopan text-xs px-2 py-0.5 rounded cursor-pointer"
             style={{
               backgroundColor: data.showPreview ? 'var(--accent)' : 'var(--bg-tertiary)',
               color: data.showPreview ? 'white' : 'var(--text-secondary)',
@@ -92,7 +98,7 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
           </button>
           {data.showPreview && (
             <button
-              className="text-xs px-2 py-0.5 rounded cursor-pointer"
+              className="nodrag nopan text-xs px-2 py-0.5 rounded cursor-pointer"
               style={{
                 backgroundColor: 'var(--bg-tertiary)',
                 color: 'var(--text-secondary)',
@@ -114,7 +120,8 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
             <textarea
               value={code}
               onChange={(e) => handleCodeChange(e.target.value)}
-              className="w-full h-full p-2 resize-none outline-none text-xs"
+              onKeyDown={(e) => e.stopPropagation()}
+              className="nodrag nopan nowheel w-full h-full p-2 resize-none outline-none text-xs"
               style={{
                 fontFamily: 'var(--font-mono)',
                 backgroundColor: '#0C0C0E',
@@ -131,7 +138,7 @@ export function CodeCard({ id, data, width, height }: CodeCardProps) {
               <iframe
                 ref={iframeRef}
                 sandbox="allow-scripts"
-                className="w-full h-full border-0"
+                className="nodrag nopan nowheel w-full h-full border-0"
                 style={{ backgroundColor: 'white' }}
                 title="Code Preview"
               />

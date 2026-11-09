@@ -14,6 +14,11 @@ export function TextCard({ id, data, width, height }: TextCardProps) {
   const updateItemData = useBoardStore((s) => s.updateItemData);
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState(data.content);
+  const [storedContent, setStoredContent] = useState(data.content);
+  if (data.content !== storedContent) {
+    setStoredContent(data.content);
+    setContent(data.content);
+  }
 
   const save = () => {
     updateItemData(id, { content } as Partial<TextData>);
@@ -29,9 +34,10 @@ export function TextCard({ id, data, width, height }: TextCardProps) {
             onChange={(e) => setContent(e.target.value)}
             onBlur={save}
             onKeyDown={(e) => {
+              e.stopPropagation();
               if (e.key === 'Escape') save();
             }}
-            className="w-full h-full resize-none outline-none text-sm"
+            className="nodrag nopan nowheel w-full h-full resize-none outline-none text-sm"
             style={{
               backgroundColor: 'transparent',
               color: 'var(--text-primary)',
@@ -42,7 +48,10 @@ export function TextCard({ id, data, width, height }: TextCardProps) {
           <div
             className="w-full h-full text-sm cursor-text whitespace-pre-wrap"
             style={{ color: 'var(--text-primary)' }}
-            onDoubleClick={() => setEditing(true)}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              setEditing(true);
+            }}
           >
             {data.content || (
               <span style={{ color: 'var(--text-secondary)' }}>

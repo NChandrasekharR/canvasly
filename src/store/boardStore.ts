@@ -21,10 +21,54 @@ interface UndoSnapshot {
   groups: Group[];
 }
 
-// Module-level save state (avoids polluting Zustand state and triggering re-renders)
+// Module-level save state (avoids polluting Zustand state and triggering re-renders).
+// Saves are queued so a slow write cannot land after a newer one, and each write
+// is pinned to the board id captured when it was scheduled.
 let _saveTimeout: ReturnType<typeof setTimeout> | null = null;
-let _saveInFlight = false;
-let _savePending = false;
+let _saveTail: Promise<void> = Promise.resolve();
+
+interface SavePayload {
+  items: BoardItem[];
+  groups: Group[];
+  viewport: { x: number; y: number; zoom: number };
+}
+
+function cancelScheduledSave() {
+  if (_saveTimeout) {
+    clearTimeout(_saveTimeout);
+    _saveTimeout = null;
+  }
+}
+
+function enqueueSave(boardId: string, data: SavePayload): Promise<void> {
+  const run = _saveTail.then(() => saveBoard(boardId, data));
+  _saveTail = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+async function flushBoardSnapshot(boardId: string, data: SavePayload): Promise<void> {
+  cancelScheduledSave();
+  try {
+    await enqueueSave(boardId, data);
+  } catch (err) {
+    console.error('[MotionBoard] Save failed', err);
+  }
+}
+
+function withoutItems(items: BoardItem[], groups: Group[], ids: Set<string>) {
+  return {
+    items: items.filter((item) => !ids.has(item.id)),
+    groups: groups
+      .map((group) => ({
+        ...group,
+        itemIds: group.itemIds.filter((id) => !ids.has(id)),
+      }))
+      .filter((group) => group.itemIds.length > 0),
+  };
+}
 
 // Restore persisted theme before first render so the UI doesn't flash dark
 const initialTheme: 'dark' | 'light' =
@@ -35,6 +79,7 @@ interface BoardState {
   // Navigation
   view: View;
   setView: (view: View) => void;
+  flushActiveBoard: () => Promise<void>;
 
   // Board list
   boards: BoardMeta[];
@@ -57,7 +102,7 @@ interface BoardState {
     data: BoardItemData,
     position: { x: number; y: number },
     size?: { width: number; height: number }
-  ) => void;
+  ) => string;
   removeItem: (id: string) => void;
   removeItems: (ids: string[]) => void;
   updateItemPosition: (id: string, position: { x: number; y: number }) => void;
@@ -121,7 +166,64 @@ const DEFAULT_SIZES: Record<BoardItemType, { width: number; height: number }> = 
 export const useBoardStore = create<BoardState>((set, get) => ({
   // Navigation
   view: 'home',
-  setView: (view) => set({ view }),
+  setView: (view) => {
+    if (view !== 'home') {
+      set({ view });
+      return;
+    }
+    const snapshot = get();
+    void (async () => {
+      if (snapshot.view === 'canvas' && snapshot.activeBoardId) {
+        await flushBoardSnapshot(snapshot.activeBoardId, {
+          items: snapshot.items,
+          groups: snapshot.groups,
+          viewport: snapshot._viewport,
+        });
+        const latest = get();
+        if (
+          latest.view === 'canvas' &&
+          latest.activeBoardId === snapshot.activeBoardId &&
+          (latest.items !== snapshot.items ||
+            latest.groups !== snapshot.groups ||
+            latest._viewport !== snapshot._viewport)
+        ) {
+          await flushBoardSnapshot(latest.activeBoardId, {
+            items: latest.items,
+            groups: latest.groups,
+            viewport: latest._viewport,
+          });
+        }
+      }
+      if (get().view === 'canvas' && get().activeBoardId === snapshot.activeBoardId) {
+        set({ view: 'home', searchQuery: '', tagFilter: null });
+        await get().loadBoards();
+      } else if (!snapshot.activeBoardId) {
+        set({ view: 'home', searchQuery: '', tagFilter: null });
+      }
+    })();
+  },
+
+  flushActiveBoard: async () => {
+    const state = get();
+    if (state.view !== 'canvas' || !state.activeBoardId) return;
+    await flushBoardSnapshot(state.activeBoardId, {
+      items: state.items,
+      groups: state.groups,
+      viewport: state._viewport,
+    });
+    const latest = get();
+    if (
+      latest.view === 'canvas' &&
+      latest.activeBoardId === state.activeBoardId &&
+      (latest.items !== state.items || latest.groups !== state.groups || latest._viewport !== state._viewport)
+    ) {
+      await flushBoardSnapshot(latest.activeBoardId, {
+        items: latest.items,
+        groups: latest.groups,
+        viewport: latest._viewport,
+      });
+    }
+  },
 
   // Board list
   boards: [],
@@ -145,14 +247,18 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   deleteBoard: async (id) => {
+    if (get().activeBoardId === id) cancelScheduledSave();
     await deleteBoardDB(id);
     await get().loadBoards();
     if (get().activeBoardId === id) {
-      set({ activeBoardId: null, items: [], groups: [], view: 'home' });
+      set({ activeBoardId: null, items: [], groups: [], view: 'home', searchQuery: '', tagFilter: null });
     }
   },
 
   duplicateBoard: async (id) => {
+    if (get().activeBoardId === id && get().view === 'canvas') {
+      await get().flushActiveBoard();
+    }
     await duplicateBoardDB(id);
     await get().loadBoards();
   },
@@ -162,6 +268,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   activeBoardName: 'Untitled Board',
 
   openBoard: async (id) => {
+    const current = get();
+    if (current.view === 'canvas' && current.activeBoardId === id) return;
+    if (current.view === 'canvas' && current.activeBoardId) {
+      await get().flushActiveBoard();
+    }
     const board = await getBoard(id);
     if (!board) return;
     set({
@@ -173,6 +284,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       view: 'canvas',
       _undoStack: [],
       _redoStack: [],
+      searchQuery: '',
+      tagFilter: null,
     });
     // Undo stack is empty here, so unreferenced blobs can't be restored — safe to collect
     cleanupOrphanedMedia(board.id, board.items)
@@ -206,26 +319,24 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       ],
     }));
     get()._scheduleSave();
+    return itemId;
   },
 
   removeItem: (id) => {
-    get()._pushUndoState();
-    set((state) => ({
-      items: state.items.filter((item) => item.id !== id),
-    }));
-    get()._scheduleSave();
+    get().removeItems([id]);
   },
 
   removeItems: (ids) => {
+    if (ids.length === 0) return;
     get()._pushUndoState();
     const idSet = new Set(ids);
-    set((state) => ({
-      items: state.items.filter((item) => !idSet.has(item.id)),
-    }));
+    set((state) => withoutItems(state.items, state.groups, idSet));
     get()._scheduleSave();
   },
 
   updateItemPosition: (id, position) => {
+    const current = get().items.find((item) => item.id === id);
+    if (current && current.position.x === position.x && current.position.y === position.y) return;
     set((state) => ({
       items: state.items.map((item) =>
         item.id === id ? { ...item, position } : item
@@ -236,8 +347,14 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
   // Batched position update — one undo entry per drag gesture, even multi-select
   updateItemPositions: (updates) => {
-    if (updates.length === 0) return;
+    const current = get().items;
+    const changed = updates.filter((update) => {
+      const item = current.find((candidate) => candidate.id === update.id);
+      return !!item && (item.position.x !== update.position.x || item.position.y !== update.position.y);
+    });
+    if (changed.length === 0) return;
     get()._pushUndoState();
+    updates = changed;
     const posMap = new Map(updates.map((u) => [u.id, u.position]));
     set((state) => ({
       items: state.items.map((item) => {
@@ -249,6 +366,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   updateItemSize: (id, size) => {
+    const current = get().items.find((item) => item.id === id);
+    if (current && current.size.width === size.width && current.size.height === size.height) return;
     set((state) => ({
       items: state.items.map((item) =>
         item.id === id ? { ...item, size } : item
@@ -319,15 +438,22 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
   // Grouping
   groupItems: (itemIds, label) => {
+    const uniqueIds = [...new Set(itemIds)];
+    if (uniqueIds.length < 2) return;
     const groupId = uuidv4();
     get()._pushUndoState();
     set((state) => ({
       groups: [
-        ...state.groups,
-        { id: groupId, label, itemIds, collapsed: false },
+        ...state.groups
+          .map((group) => ({
+            ...group,
+            itemIds: group.itemIds.filter((id) => !uniqueIds.includes(id)),
+          }))
+          .filter((group) => group.itemIds.length > 0),
+        { id: groupId, label, itemIds: uniqueIds, collapsed: false },
       ],
       items: state.items.map((item) =>
-        itemIds.includes(item.id) ? { ...item, groupId } : item
+        uniqueIds.includes(item.id) ? { ...item, groupId } : item
       ),
     }));
     get()._scheduleSave();
@@ -384,13 +510,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   duplicateItems: (ids) => {
     get()._pushUndoState();
     set((state) => {
+      const maxZ = Math.max(0, ...state.items.map((item) => item.zIndex));
       const newItems = state.items
         .filter((item) => ids.includes(item.id))
-        .map((item) => ({
+        .map((item, index) => ({
           ...item,
           id: uuidv4(),
           position: { x: item.position.x + 30, y: item.position.y + 30 },
           createdAt: new Date(),
+          groupId: undefined,
+          zIndex: maxZ + 1 + index,
         }));
       return { items: [...state.items, ...newItems] };
     });
@@ -420,28 +549,24 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     get()._scheduleSave();
   },
 
-  // Auto-save (debounced 500ms, with in-flight protection)
+  // Auto-save (debounced 500ms). The board id is read when the timer fires,
+  // and navigation flushes the current board before that id can change.
   _scheduleSave: () => {
-    if (_saveTimeout) clearTimeout(_saveTimeout);
-    _saveTimeout = setTimeout(async () => {
+    cancelScheduledSave();
+    _saveTimeout = setTimeout(() => {
       _saveTimeout = null;
-      if (_saveInFlight) {
-        _savePending = true;
-        return;
-      }
-      _saveInFlight = true;
-      try {
-        const { activeBoardId, items, groups, _viewport } = get();
-        if (!activeBoardId) return;
-        await saveBoard(activeBoardId, { items, groups, viewport: _viewport });
-        await get().refreshStorageUsage();
-      } finally {
-        _saveInFlight = false;
-        if (_savePending) {
-          _savePending = false;
-          get()._scheduleSave();
-        }
-      }
+      const latest = get();
+      if (!latest.activeBoardId || latest.view !== 'canvas') return;
+      const boardId = latest.activeBoardId;
+      void enqueueSave(boardId, {
+        items: latest.items,
+        groups: latest.groups,
+        viewport: latest._viewport,
+      })
+        .then(() => {
+          if (get().activeBoardId === boardId) return get().refreshStorageUsage();
+        })
+        .catch((err) => console.error('[MotionBoard] Save failed', err));
     }, 500);
   },
 }));
