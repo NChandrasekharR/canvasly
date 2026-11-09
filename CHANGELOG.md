@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Duplicating a board now copies its media and rewrites blob ids. Copies previously
+  displayed the original board's files, then lost them when that board was cleaned
+  up or deleted.
+- Switching boards, going home, exporting, or duplicating flushes the debounced
+  save first, so the last edit is not written onto the wrong board or dropped.
+- Grouped cards move together, including while dragging, and deleted or regrouped
+  cards no longer stay attached to a stale group.
+- Hover-to-play embeds no longer stop the moment the player appears. Click
+  Controls to use the player, or Expand to enlarge the card in place.
+- Rive speed buttons change playback, and files with state machines actually run
+  that state machine, including its inputs.
+- Lottie files load under React Strict Mode. Files over 100KB are stored as media
+  instead of inside the board document.
+- Undo and redo no longer fire while typing in a note, snippet, tag, or search
+  field. Code edits follow undo again.
+- Pasting into a text field no longer also creates a card. Double-clicking a card
+  no longer opens the add menu or zooms the canvas.
+- Resizing a card from the left or top keeps its new position. Imported videos keep
+  their MIME type so they play, and downloads are not cancelled by revoking the
+  file URL immediately.
+- Cmd/Ctrl+A selects every card, Cmd/Ctrl+N creates a board, and Escape clears
+  the selection when search is empty.
+- Item `createdAt` values round-trip through save and duplicate. `Date.toJSON`
+  was turning them into plain strings before the serializer could mark them.
+
 ### Added
 - Toast notification system (`toastStore` + `Toaster`) for app-wide feedback on
   import/export results, file-size limits, unsupported file types, invalid Lottie

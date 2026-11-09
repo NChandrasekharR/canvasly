@@ -1,5 +1,16 @@
-import { ViewportPortal } from '@xyflow/react';
+import { useStore, ViewportPortal, type Node } from '@xyflow/react';
 import { useBoardStore } from '../store/boardStore';
+import type { BoardItem } from '../types';
+
+function memberBox(item: BoardItem, flowNodes: Node[]) {
+  const node = flowNodes.find((candidate) => candidate.id === item.id);
+  return {
+    x: node?.position.x ?? item.position.x,
+    y: node?.position.y ?? item.position.y,
+    width: node?.measured?.width ?? item.size.width,
+    height: node?.measured?.height ?? item.size.height,
+  };
+}
 
 const PADDING = 14;
 
@@ -11,6 +22,7 @@ export function GroupOverlay() {
   const groups = useBoardStore((s) => s.groups);
   const items = useBoardStore((s) => s.items);
   const ungroupItems = useBoardStore((s) => s.ungroupItems);
+  const flowNodes = useStore((s) => s.nodes);
 
   if (groups.length === 0) return null;
 
@@ -20,10 +32,11 @@ export function GroupOverlay() {
         const members = items.filter((i) => group.itemIds.includes(i.id));
         if (members.length === 0) return null;
 
-        const minX = Math.min(...members.map((i) => i.position.x)) - PADDING;
-        const minY = Math.min(...members.map((i) => i.position.y)) - PADDING;
-        const maxX = Math.max(...members.map((i) => i.position.x + i.size.width)) + PADDING;
-        const maxY = Math.max(...members.map((i) => i.position.y + i.size.height)) + PADDING;
+        const boxes = members.map((member) => memberBox(member, flowNodes));
+        const minX = Math.min(...boxes.map((box) => box.x)) - PADDING;
+        const minY = Math.min(...boxes.map((box) => box.y)) - PADDING;
+        const maxX = Math.max(...boxes.map((box) => box.x + box.width)) + PADDING;
+        const maxY = Math.max(...boxes.map((box) => box.y + box.height)) + PADDING;
 
         return (
           <div

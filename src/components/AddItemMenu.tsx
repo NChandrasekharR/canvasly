@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useBoardStore } from '../store/boardStore';
-import { parseVideoUrl, getVideoDuration } from '../utils/video';
-import { isImageFile, isGifFile, isVideoFile, getFileExtension, MAX_FILE_SIZE, WARN_FILE_SIZE } from '../utils/files';
-import { saveMedia } from '../db/boardRepository';
+import { parseVideoUrl } from '../utils/video';
+import { IngestError, prepareItemFromFile, stackPosition } from '../utils/ingestFile';
+import { looksLikeLottiePage, parseLottieUrl } from '../utils/lottie';
+import { loadVideoMetadata } from '../utils/videoMetadata';
 import { showToast } from '../store/toastStore';
-import type { ImageItemData, VideoEmbedData, VideoUploadData, LottieData, RiveData, TextData, CodeData, ColorData } from '../types';
+import type { VideoEmbedData, TextData, CodeData, ColorData, LottieData } from '../types';
 
 /* ─── SVG Icons ─── */
 const IconUpload = () => (
@@ -51,48 +52,15 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
   }, [onClose]);
 
   const handleFileUpload = async (files: FileList | null) => {
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      // File size validation
-      if (file.size > MAX_FILE_SIZE) {
-        showToast(`"${file.name}" exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`, 'error');
-        continue;
-      }
-      if (file.size > WARN_FILE_SIZE) {
-        showToast(`"${file.name}" is large (${(file.size / (1024 * 1024)).toFixed(1)}MB) — may slow saving`, 'warning');
-      }
-
-      const ext = getFileExtension(file.name);
-
-      if (ext === 'json') {
-        try {
-          const text = await file.text();
-          const animationData = JSON.parse(text);
-          const data: LottieData = { animationData, speed: 1, fileName: file.name };
-          addItem('lottie', data, canvasPosition);
-        } catch {
-          showToast(`"${file.name}" is not a valid Lottie JSON file`, 'error');
-        }
-      } else if (ext === 'riv') {
-        if (!activeBoardId) continue;
-        const blobId = await saveMedia(activeBoardId, file, file.name, 'application/octet-stream');
-        const data: RiveData = { blobId, fileName: file.name, fileSize: file.size, speed: 1 };
-        addItem('rive', data, canvasPosition);
-      } else if (isVideoFile(file)) {
-        if (!activeBoardId) continue;
-        const duration = await getVideoDuration(file);
-        const blobId = await saveMedia(activeBoardId, file, file.name, file.type);
-        const data: VideoUploadData = {
-          blobId, fileName: file.name, mimeType: file.type, fileSize: file.size, duration,
-        };
-        addItem('video-upload', data, canvasPosition);
-      } else if (isGifFile(file) || isImageFile(file)) {
-        if (!activeBoardId) continue;
-        const blobId = await saveMedia(activeBoardId, file, file.name, file.type || 'image/png');
-        const data: ImageItemData = { blobId, fileName: file.name };
-        addItem('image', data, canvasPosition);
-      } else {
-        showToast(`Unsupported file type: "${file.name}"`, 'warning');
+    if (!files || !activeBoardId) return;
+    for (const [index, file] of Array.from(files).entries()) {
+      try {
+        const prepared = await prepareItemFromFile(file, activeBoardId);
+        if (prepared.warning) showToast(prepared.warning, 'warning');
+        addItem(prepared.type, prepared.data, stackPosition(canvasPosition, index));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not add file';
+        showToast(message, err instanceof IngestError ? err.level : 'error');
       }
     }
     onClose();
@@ -102,17 +70,30 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
     const url = urlValue.trim();
     if (!url) return;
 
+    const lottieUrl = parseLottieUrl(url);
+    if (lottieUrl) {
+      const data: LottieData = { url: lottieUrl, speed: 1 };
+      addItem('lottie', data, canvasPosition);
+      onClose();
+      return;
+    }
+    if (looksLikeLottiePage(url)) {
+      showToast('Paste a direct .json or .lottie file URL to add a Lottie animation', 'warning');
+      return;
+    }
+
     const parsed = parseVideoUrl(url);
-    if (parsed) {
+    if (parsed && (parsed.platform === 'youtube' || parsed.platform === 'vimeo')) {
       const data: VideoEmbedData = {
         url,
         embedUrl: parsed.embedUrl,
         platform: parsed.platform,
         thumbnailUrl: parsed.thumbnailUrl,
       };
-      addItem('video-embed', data, canvasPosition);
+      const id = addItem('video-embed', data, canvasPosition);
+      loadVideoMetadata(id, url, parsed.platform);
     } else {
-      showToast('URL not recognized — only YouTube and Vimeo links are supported', 'warning');
+      showToast('URL not recognized — use a YouTube, Vimeo, or direct Lottie file link', 'warning');
     }
     onClose();
   };
@@ -143,7 +124,7 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
           </div>
           <input
             type="text"
-            placeholder="YouTube or Vimeo URL..."
+            placeholder="YouTube, Vimeo, or Lottie URL..."
             value={urlValue}
             onChange={(e) => setUrlValue(e.target.value)}
             onKeyDown={(e) => {
@@ -165,7 +146,7 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
             onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--accent-hover)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--accent)'; }}
           >
-            Add Video
+            Add
           </button>
         </div>
       ) : (
@@ -184,7 +165,7 @@ export function AddItemMenu({ position, canvasPosition, onClose }: AddItemMenuPr
           <MenuItem
             icon={<IconLink />}
             label="Paste URL"
-            hint="YouTube, Vimeo"
+            hint="YouTube, Vimeo, Lottie"
             onClick={() => setShowUrlInput(true)}
           />
           <div style={{ borderTop: '1px solid var(--border)', margin: '4px 8px' }} />

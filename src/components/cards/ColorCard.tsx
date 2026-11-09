@@ -14,6 +14,11 @@ export function ColorCard({ id, data, width, height }: ColorCardProps) {
   const updateItemData = useBoardStore((s) => s.updateItemData);
   const [editing, setEditing] = useState(false);
   const [hex, setHex] = useState(data.hex);
+  const [storedHex, setStoredHex] = useState(data.hex);
+  if (data.hex !== storedHex) {
+    setStoredHex(data.hex);
+    setHex(data.hex);
+  }
 
   const save = () => {
     updateItemData(id, { hex } as Partial<ColorData>);
@@ -34,7 +39,7 @@ export function ColorCard({ id, data, width, height }: ColorCardProps) {
   return (
     <CardWrapper id={id} title={data.label ?? data.hex} typeIcon="#" width={width} height={height}>
       <div
-        className="w-full h-full flex flex-col items-center justify-center gap-2 cursor-pointer"
+        className="nodrag nopan nowheel w-full h-full flex flex-col items-center justify-center gap-2 cursor-pointer"
         style={{ backgroundColor: data.hex }}
         onClick={() => setEditing(true)}
       >
@@ -47,7 +52,8 @@ export function ColorCard({ id, data, width, height }: ColorCardProps) {
               updateItemData(id, { hex: e.target.value } as Partial<ColorData>);
             }}
             onBlur={save}
-            className="w-12 h-12 cursor-pointer border-0"
+            onKeyDown={(e) => e.stopPropagation()}
+            className="nodrag nopan nowheel w-12 h-12 cursor-pointer border-0"
             autoFocus
           />
         ) : null}

@@ -3,6 +3,15 @@ import { db } from '../db/database';
 import { getBoard, createBoard, saveBoard, saveMedia } from '../db/boardRepository';
 import type { BoardItem, Group } from '../types';
 
+function reviveItems(items: BoardItem[]): BoardItem[] {
+  return items.map((item) => ({
+    ...item,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    createdAt:
+      item.createdAt instanceof Date ? item.createdAt : new Date(item.createdAt as unknown as string),
+  }));
+}
+
 interface MotionBoardManifest {
   version: 1;
   name: string;
@@ -70,19 +79,21 @@ export async function importBoard(file: File): Promise<string> {
   // Create a new board
   const boardId = await createBoard(manifest.name);
 
-  // Import media files and build old->new ID mapping
+  // Import media files and build old->new ID mapping.
+  // JSZip blobs have an empty MIME type, which stops <video> from playing.
   const mediaIdMap = new Map<string, string>();
-  for (const mediaRef of manifest.mediaFiles) {
+  for (const mediaRef of manifest.mediaFiles ?? []) {
     const mediaFile = zip.file(`media/${mediaRef.id}`);
     if (mediaFile) {
-      const blob = await mediaFile.async('blob');
+      const raw = await mediaFile.async('blob');
+      const blob = mediaRef.mimeType ? new Blob([raw], { type: mediaRef.mimeType }) : raw;
       const newId = await saveMedia(boardId, blob, mediaRef.fileName, mediaRef.mimeType);
       mediaIdMap.set(mediaRef.id, newId);
     }
   }
 
-  // Remap media IDs in items
-  const items = manifest.items.map((item) => {
+  // Remap media IDs in items and restore dates that JSON turned into strings.
+  const items = reviveItems(manifest.items).map((item) => {
     const data = { ...item.data };
     if ('blobId' in data && typeof data.blobId === 'string') {
       const newId = mediaIdMap.get(data.blobId);
@@ -95,8 +106,8 @@ export async function importBoard(file: File): Promise<string> {
 
   await saveBoard(boardId, {
     items,
-    groups: manifest.groups,
-    viewport: manifest.viewport,
+    groups: Array.isArray(manifest.groups) ? manifest.groups : [],
+    viewport: manifest.viewport ?? { x: 0, y: 0, zoom: 1 },
     name: manifest.name,
   });
 
@@ -108,6 +119,11 @@ export function downloadBlob(blob: Blob, fileName: string) {
   const a = document.createElement('a');
   a.href = url;
   a.download = fileName;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  // Keep the object URL alive until the browser has started the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }

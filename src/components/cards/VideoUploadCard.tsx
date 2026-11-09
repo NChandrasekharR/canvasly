@@ -44,7 +44,7 @@ export function VideoUploadCard({ id, data, width, height, blobUrl }: VideoUploa
           <video
             ref={videoRef}
             src={blobUrl}
-            className="w-full h-full object-contain"
+            className={`${showControls ? 'nodrag nopan nowheel' : ''} w-full h-full object-contain`}
             loop
             muted
             playsInline

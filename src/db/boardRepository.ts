@@ -13,19 +13,42 @@ export interface BoardMeta {
 }
 
 function serializeItems(items: BoardItem[]): string {
-  return JSON.stringify(items, (_key, value) => {
-    if (value instanceof Date) return { __date: value.toISOString() };
+  // Date.toJSON runs before a replacer sees the value, so check the original
+  // property. Otherwise createdAt is stored as a bare ISO string and comes
+  // back as a string instead of a Date.
+  return JSON.stringify(items, function (key, value) {
+    const original = this[key];
+    if (original instanceof Date) return { __date: original.toISOString() };
     return value;
   });
 }
 
+function reviveDate(value: unknown): Date | undefined {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  if (value && typeof value === 'object' && '__date' in value) {
+    const date = new Date((value as { __date: unknown }).__date as string);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return undefined;
+}
+
 function deserializeItems(json: string): BoardItem[] {
-  return JSON.parse(json, (_key, value) => {
-    if (value && typeof value === 'object' && '__date' in value) {
-      return new Date(value.__date as string);
+  const items = JSON.parse(json, (_key, value) => {
+    if (value && typeof value === 'object' && '__date' in value && !Array.isArray(value)) {
+      const date = reviveDate(value);
+      return date ?? value;
     }
     return value;
-  });
+  }) as BoardItem[];
+  return items.map((item) => ({
+    ...item,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    createdAt: reviveDate(item.createdAt) ?? new Date(0),
+  }));
 }
 
 export async function listBoards(): Promise<BoardMeta[]> {
@@ -119,19 +142,39 @@ export async function duplicateBoard(id: string): Promise<string> {
 
   const newId = uuidv4();
   const now = new Date();
-  await db.boards.add({
-    ...board,
-    id: newId,
-    name: `${board.name} (copy)`,
-    createdAt: now,
-    updatedAt: now,
+  const mediaItems = await db.media.where('boardId').equals(id).toArray();
+  const idMap = new Map<string, string>();
+  const copiedMedia = mediaItems.map((media) => {
+    const mediaId = uuidv4();
+    idMap.set(media.id, mediaId);
+    return { ...media, id: mediaId, boardId: newId };
   });
 
-  // Duplicate media
-  const mediaItems = await db.media.where('boardId').equals(id).toArray();
-  for (const m of mediaItems) {
-    await db.media.add({ ...m, id: uuidv4(), boardId: newId });
-  }
+  // Items must point at the copy's blobs. Leaving the original ids makes the
+  // duplicate look fine until orphan cleanup, or a delete on the source board,
+  // removes the only bytes those items can still load.
+  const items = deserializeItems(board.items).map((item) => {
+    const blobId = (item.data as { blobId?: unknown }).blobId;
+    if (typeof blobId !== 'string' || !idMap.has(blobId)) return item;
+    return { ...item, data: { ...item.data, blobId: idMap.get(blobId) } };
+  });
+  const serializedItems = serializeItems(items);
+
+  await db.transaction('rw', [db.boards, db.media], async () => {
+    await db.boards.add({
+      ...board,
+      id: newId,
+      name: `${board.name} (copy)`,
+      createdAt: now,
+      updatedAt: now,
+      items: serializedItems,
+      itemCount: items.length,
+      storageSize: new Blob([serializedItems]).size,
+    });
+    if (copiedMedia.length > 0) {
+      await db.media.bulkAdd(copiedMedia);
+    }
+  });
 
   return newId;
 }
