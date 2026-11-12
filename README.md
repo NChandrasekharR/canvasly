@@ -2,6 +2,8 @@
 
 A freeform canvas moodboard for video editors, animators, and motion designers. Unlike static pinboards, everything on MotionBoard is **alive** — videos loop on hover, Lottie animations play inline, Rive files respond to interaction, GIFs animate, and code snippets execute live.
 
+What to build next, in order, is in [ROADMAP.md](ROADMAP.md).
+
 ## Features
 
 - **Infinite canvas** — Pan, zoom, and arrange cards freely using React Flow
